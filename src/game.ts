@@ -24,7 +24,7 @@ export class Game {
 
   elapsed = 0;
   countdownStart = 0;
-  countdownDuration = 3;
+  countdownDuration = 2;
   battleStartTime = 0;
   winnerTime = 0;
   lastCannonEscalation = 0;
@@ -259,7 +259,7 @@ export class Game {
     this.simPrng = null;
     this.chosenWinnerId = -1;
     this.winningSeed = -1;
-    this.countdownDuration = 3;
+    this.countdownDuration = 2;
   }
 
   /** Run a headless simulation with the given seed. Returns the id of the winning tower, or -1 if no clear winner. */
@@ -709,8 +709,8 @@ export class Game {
       tower.draw(ctx);
     }
 
-    // Draw "W" marker on the pre-selected winner
-    if ((this.state === 'BATTLE' || this.state === 'NUKE' || this.state === 'WINNER') && this.chosenWinnerId >= 0) {
+    // Draw "W" marker on the pre-selected winner (debug/test only)
+    if (import.meta.env.DEV && (this.state === 'BATTLE' || this.state === 'NUKE' || this.state === 'WINNER') && this.chosenWinnerId >= 0) {
       const chosen = this.towers.find(t => t.id === this.chosenWinnerId);
       if (chosen) {
         ctx.save();
