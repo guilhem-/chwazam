@@ -1,5 +1,6 @@
 import { hexToRgb, rgbString } from './colors';
 import { randomRange, easeOutBack } from './utils';
+import type { PRNG } from './prng';
 
 export interface Cannon {
   // Global: position on the circle perimeter
@@ -67,26 +68,28 @@ export class Tower {
     this.color = color;
   }
 
-  addCannon(elapsed: number) {
+  addCannon(elapsed: number, prng?: PRNG) {
+    const rr = prng ? prng.randomRange.bind(prng) : randomRange;
+    const rf = prng ? prng.random.bind(prng) : Math.random;
     const n = this.cannons.length;
     const cannon: Cannon = {
       orbitAngle: n === 0
-        ? randomRange(0, Math.PI * 2)
+        ? rr(0, Math.PI * 2)
         : this.cannons[n - 1].orbitAngle + Math.PI * 2 / (n + 1),
-      orbitSpeed: randomRange(1.5, 3.0) * (Math.random() > 0.5 ? 1 : -1),
-      oscillatePhase: randomRange(0, Math.PI * 2),
-      oscillateSpeed: randomRange(2, 4),
-      fireTimer: randomRange(0.1, 0.8),
-      fireInterval: randomRange(0.4, 1.0),
+      orbitSpeed: rr(1.5, 3.0) * (rf() > 0.5 ? 1 : -1),
+      oscillatePhase: rr(0, Math.PI * 2),
+      oscillateSpeed: rr(2, 4),
+      fireTimer: rr(0.1, 0.8),
+      fireInterval: rr(0.4, 1.0),
       spawnTime: elapsed,
       scale: 0,
     };
     this.cannons.push(cannon);
   }
 
-  startBattle(elapsed: number) {
+  startBattle(elapsed: number, prng?: PRNG) {
     this.cannonVisible = true;
-    this.addCannon(elapsed);
+    this.addCannon(elapsed, prng);
   }
 
   fingerRemoved() {

@@ -5,6 +5,7 @@ import { VictoryArrows } from './victory';
 import { TOWER_COLORS } from './colors';
 import { dist, angleBetween, randomRange } from './utils';
 import { t } from './i18n';
+import { createPRNG, type PRNG } from './prng';
 
 export type GameState = 'WAITING' | 'PLACING' | 'COUNTDOWN' | 'BATTLE' | 'WINNER' | 'BLACK';
 
@@ -36,6 +37,10 @@ export class Game {
   mouseClickCounter = 0;
 
   textPulse = 0;
+
+  simPrng: PRNG | null = null;
+  chosenWinnerId = -1;
+  winningSeed = -1;
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -211,6 +216,180 @@ export class Game {
     this.lastCannonEscalation = 0;
     this.deathCounter = 0;
     this.mouseClickCounter = 0;
+    this.simPrng = null;
+    this.chosenWinnerId = -1;
+    this.winningSeed = -1;
+  }
+
+  /** Run a headless simulation with the given seed. Returns the id of the winning tower, or -1 if no clear winner. */
+  private runHeadlessSim(towerSnapshots: { id: number; x: number; y: number; color: string }[], seed: number, canvasW: number, canvasH: number): number {
+    const prng = createPRNG(seed);
+    const dt = 1 / 60;
+    let simElapsed = 0;
+
+    // Create fresh towers from snapshots
+    const towers: Tower[] = towerSnapshots.map(s => {
+      const t = new Tower(s.id, s.x, s.y, s.color);
+      t.spawnTime = 0;
+      t.scale = 1;
+      return t;
+    });
+
+    if (towers.length <= 1) {
+      return towers.length === 1 ? towers[0].id : -1;
+    }
+
+    // Start battle for each tower
+    for (const tower of towers) {
+      tower.startBattle(simElapsed, prng);
+    }
+
+    let lastCannonEscalation = simElapsed;
+    let guidedMissileActive = false;
+    let guidedMissileTimer = 0;
+    let deathCounter = 0;
+
+    const bullets: Bullet[] = [];
+    const maxTicks = 3600; // 60 seconds at 60fps
+
+    for (let tick = 0; tick < maxTicks; tick++) {
+      simElapsed += dt;
+
+      // Cannon escalation every 3s
+      if (simElapsed - lastCannonEscalation >= 3) {
+        lastCannonEscalation = simElapsed;
+        for (const tower of towers) {
+          if (tower.alive && tower.withdrawScale > 0.5) {
+            tower.addCannon(simElapsed, prng);
+          }
+        }
+      }
+
+      // Guided missiles after 10s
+      const battleTime = simElapsed;
+      if (battleTime >= 10 && !guidedMissileActive) {
+        guidedMissileActive = true;
+        guidedMissileTimer = 0;
+      }
+
+      if (guidedMissileActive) {
+        guidedMissileTimer -= dt;
+        if (guidedMissileTimer <= 0) {
+          guidedMissileTimer = 1.5;
+          for (const tower of towers) {
+            if (tower.alive && tower.withdrawScale > 0.5) {
+              // Inline guided missile firing with prng
+              const enemies = towers.filter(t => t.alive && t.id !== tower.id && !t.invincible);
+              if (enemies.length > 0) {
+                const target = enemies[Math.floor(prng.random() * enemies.length)];
+                const c = tower.cannons.length > 0 ? tower.cannons[Math.floor(prng.random() * tower.cannons.length)] : null;
+                const fireX = c ? tower.x + Math.cos(c.orbitAngle) * tower.radius : tower.x;
+                const fireY = c ? tower.y + Math.sin(c.orbitAngle) * tower.radius : tower.y;
+                const aimAngle = angleBetween(fireX, fireY, target.x, target.y);
+                const bullet = new Bullet(fireX, fireY, aimAngle, tower.color, tower.id, true);
+                bullet.setTarget(target.x, target.y);
+                bullets.push(bullet);
+              }
+            }
+          }
+        }
+      }
+
+      // Update towers
+      for (const tower of towers) {
+        if (!tower.alive) continue;
+        const wasAlive = tower.alive;
+        const result = tower.update(dt, simElapsed);
+
+        if (wasAlive && !tower.alive) {
+          deathCounter++;
+          tower.lastDeathOrder = deathCounter;
+        }
+
+        for (const fire of result.fires) {
+          bullets.push(new Bullet(fire.x, fire.y, fire.angle, tower.color, tower.id));
+        }
+      }
+
+      // Update bullets
+      for (let i = bullets.length - 1; i >= 0; i--) {
+        const bullet = bullets[i];
+
+        if (bullet.guided) {
+          const enemies = towers.filter(t => t.alive && t.id !== bullet.sourceId && !t.invincible);
+          if (enemies.length > 0) {
+            let nearest = enemies[0];
+            let nearestDist = dist(bullet.x, bullet.y, nearest.x, nearest.y);
+            for (let j = 1; j < enemies.length; j++) {
+              const d = dist(bullet.x, bullet.y, enemies[j].x, enemies[j].y);
+              if (d < nearestDist) {
+                nearest = enemies[j];
+                nearestDist = d;
+              }
+            }
+            bullet.setTarget(nearest.x, nearest.y);
+          } else {
+            bullet.guided = false;
+          }
+        }
+
+        bullet.update(dt, canvasW, canvasH);
+
+        if (!bullet.alive) {
+          bullets.splice(i, 1);
+          continue;
+        }
+
+        let hitSomething = false;
+        for (const tower of towers) {
+          if (!tower.alive || tower.id === bullet.sourceId) continue;
+          if (tower.invincible) continue;
+          if (tower.withdrawScale < 0.3) continue;
+          const d = dist(bullet.x, bullet.y, tower.x, tower.y);
+          if (d < tower.radius * tower.scale * tower.withdrawScale + bullet.radius) {
+            const wasHit = tower.hit();
+            if (wasHit) {
+              bullet.alive = false;
+              if (!tower.alive) {
+                deathCounter++;
+                tower.lastDeathOrder = deathCounter;
+              }
+              hitSomething = true;
+            }
+            break;
+          }
+        }
+
+        if (hitSomething) {
+          bullets.splice(i, 1);
+        }
+      }
+
+      // Check for winner
+      const aliveTowers = towers.filter(t => t.alive);
+      if (aliveTowers.length <= 1) {
+        if (aliveTowers.length === 1) {
+          return aliveTowers[0].id;
+        }
+        // All dead simultaneously — last to die wins
+        const lastDead = towers.reduce((a, b) => a.lastDeathOrder > b.lastDeathOrder ? a : b);
+        return lastDead.id;
+      }
+    }
+
+    // Timeout — no winner found
+    return -1;
+  }
+
+  /** Find a seed where chosenWinnerId wins. Returns the seed, or -1 if not found. */
+  private findWinningScenario(towerSnapshots: { id: number; x: number; y: number; color: string }[], chosenWinnerId: number, canvasW: number, canvasH: number): number {
+    for (let seed = 0; seed < 2000; seed++) {
+      const winnerId = this.runHeadlessSim(towerSnapshots, seed, canvasW, canvasH);
+      if (winnerId === chosenWinnerId) {
+        return seed;
+      }
+    }
+    return -1;
   }
 
   startBattle() {
@@ -223,18 +402,45 @@ export class Game {
 
     if (this.towers.length === 1) {
       this.towers[0].invincible = true;
+      this.simPrng = null;
+      for (const tower of this.towers) {
+        tower.startBattle(this.elapsed);
+      }
+      return;
+    }
+
+    // Snapshot tower positions for simulation
+    const snapshots = this.towers.map(t => ({ id: t.id, x: t.x, y: t.y, color: t.color }));
+
+    // Pre-select a random winner (fair: uniform 1/N)
+    const winnerIdx = Math.floor(Math.random() * this.towers.length);
+    const chosenWinnerId = this.towers[winnerIdx].id;
+    this.chosenWinnerId = chosenWinnerId;
+
+    // Find a seed that produces this winner
+    this.winningSeed = this.findWinningScenario(snapshots, chosenWinnerId, this.width, this.height);
+
+    if (this.winningSeed >= 0) {
+      // Replay with the winning seed
+      this.simPrng = createPRNG(this.winningSeed);
+    } else {
+      // Fallback: couldn't find a winning seed, use a random seed (rare)
+      this.simPrng = createPRNG(Math.floor(Math.random() * 100000));
     }
 
     for (const tower of this.towers) {
-      tower.startBattle(this.elapsed);
+      // Ensure tower scale matches headless sim (fully scaled at battle start)
+      tower.scale = 1;
+      tower.startBattle(this.elapsed, this.simPrng);
     }
   }
 
   fireGuidedMissile(tower: Tower) {
     const enemies = this.towers.filter(t => t.alive && t.id !== tower.id && !t.invincible);
     if (enemies.length === 0) return;
-    const target = enemies[Math.floor(Math.random() * enemies.length)];
-    const c = tower.cannons.length > 0 ? tower.cannons[Math.floor(Math.random() * tower.cannons.length)] : null;
+    const rf = this.simPrng ? this.simPrng.random.bind(this.simPrng) : Math.random;
+    const target = enemies[Math.floor(rf() * enemies.length)];
+    const c = tower.cannons.length > 0 ? tower.cannons[Math.floor(rf() * tower.cannons.length)] : null;
     const fireX = c ? tower.x + Math.cos(c.orbitAngle) * tower.radius : tower.x;
     const fireY = c ? tower.y + Math.sin(c.orbitAngle) * tower.radius : tower.y;
     const aimAngle = angleBetween(fireX, fireY, target.x, target.y);
@@ -266,7 +472,7 @@ export class Game {
         this.lastCannonEscalation = this.elapsed;
         for (const tower of this.towers) {
           if (tower.alive && tower.withdrawScale > 0.5) {
-            tower.addCannon(this.elapsed);
+            tower.addCannon(this.elapsed, this.simPrng ?? undefined);
           }
         }
       }
@@ -343,7 +549,7 @@ export class Game {
         if (!tower.alive || tower.id === bullet.sourceId) continue;
         if (tower.invincible) continue;
         if (tower.withdrawScale < 0.3) continue;
-        const d = dist(bullet.x, bullet.y, tower.x + tower.shakeX, tower.y + tower.shakeY);
+        const d = dist(bullet.x, bullet.y, tower.x, tower.y);
         if (d < tower.radius * tower.scale * tower.withdrawScale + bullet.radius) {
           const wasHit = tower.hit();
           if (wasHit) {
@@ -438,6 +644,23 @@ export class Game {
     for (const tower of this.towers) {
       if (!tower.alive) continue;
       tower.draw(ctx);
+    }
+
+    // Draw "W" marker on the pre-selected winner
+    if ((this.state === 'BATTLE' || this.state === 'WINNER') && this.chosenWinnerId >= 0) {
+      const chosen = this.towers.find(t => t.id === this.chosenWinnerId);
+      if (chosen) {
+        ctx.save();
+        ctx.font = 'bold 22px -apple-system, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillStyle = 'rgba(255,255,255,0.9)';
+        ctx.strokeStyle = 'rgba(0,0,0,0.6)';
+        ctx.lineWidth = 3;
+        ctx.strokeText('W', chosen.x + chosen.shakeX, chosen.y + chosen.shakeY);
+        ctx.fillText('W', chosen.x + chosen.shakeX, chosen.y + chosen.shakeY);
+        ctx.restore();
+      }
     }
 
     // Draw bullets
