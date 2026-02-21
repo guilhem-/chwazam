@@ -4,6 +4,7 @@ import { ParticleSystem } from './particles';
 import { VictoryArrows } from './victory';
 import { TOWER_COLORS } from './colors';
 import { dist, angleBetween, randomRange } from './utils';
+import { t } from './i18n';
 
 export type GameState = 'WAITING' | 'PLACING' | 'COUNTDOWN' | 'BATTLE' | 'WINNER' | 'BLACK';
 
@@ -31,8 +32,8 @@ export class Game {
 
   nextTowerId = 0;
   activeTouches = new Map<number, number>(); // touchId -> towerId
-  deathCounter = 0; // tracks order of deaths for no-draw rule
-  mouseClickCounter = 0; // unique ID for each mouse click
+  deathCounter = 0;
+  mouseClickCounter = 0;
 
   textPulse = 0;
 
@@ -75,7 +76,6 @@ export class Game {
       this.handleTouchEnd(e);
     }, { passive: false });
 
-    // Mouse support for desktop testing
     this.canvas.addEventListener('mousedown', (e) => {
       this.handleMouseDown(e);
     });
@@ -85,18 +85,18 @@ export class Game {
   }
 
   handleTouchStart(e: TouchEvent) {
+    // WINNER/BLACK: reset and immediately place the new fingers as towers
     if (this.state === 'WINNER' || this.state === 'BLACK') {
       this.reset();
-      return;
+      // Fall through to place fingers below
     }
 
     // During battle: re-associate fingers with nearby dormant towers
     if (this.state === 'BATTLE') {
       for (let i = 0; i < e.changedTouches.length; i++) {
         const touch = e.changedTouches[i];
-        // Find nearest alive withdrawn tower
         let nearest: Tower | null = null;
-        let nearestDist = 100; // max reactivation distance
+        let nearestDist = 100;
         for (const tower of this.towers) {
           if (!tower.alive || tower.hasFinger) continue;
           const d = dist(touch.clientX, touch.clientY, tower.x, tower.y);
@@ -107,8 +107,6 @@ export class Game {
         }
         if (nearest) {
           nearest.fingerRestored();
-          nearest.x = touch.clientX;
-          nearest.y = touch.clientY;
           this.activeTouches.set(touch.identifier, nearest.id);
         }
       }
@@ -126,13 +124,15 @@ export class Game {
   }
 
   handleTouchMove(e: TouchEvent) {
-    // Before battle: disks track finger positions
+    // Only track finger positions before battle
+    if (this.state === 'BATTLE' || this.state === 'WINNER') return;
+
     for (let i = 0; i < e.changedTouches.length; i++) {
       const touch = e.changedTouches[i];
       const towerId = this.activeTouches.get(touch.identifier);
       if (towerId !== undefined) {
         const tower = this.towers.find(t => t.id === towerId);
-        if (tower && (this.state !== 'BATTLE' || tower.hasFinger)) {
+        if (tower) {
           tower.x = touch.clientX;
           tower.y = touch.clientY;
         }
@@ -153,21 +153,28 @@ export class Game {
           tower.fingerRemoved();
         }
       }
+
+      // Before battle: remove the tower when finger lifts
+      if ((this.state === 'PLACING' || this.state === 'COUNTDOWN') && towerId !== undefined) {
+        const idx = this.towers.findIndex(t => t.id === towerId);
+        if (idx !== -1) {
+          this.towers.splice(idx, 1);
+        }
+      }
     }
 
     // Screen goes black if all fingers removed during PLACING/COUNTDOWN
     if ((this.state === 'PLACING' || this.state === 'COUNTDOWN') && this.activeTouches.size === 0) {
-      this.state = 'BLACK';
-      this.blackScreenTime = this.elapsed;
-      this.towers = [];
-      this.bullets = [];
+      if (this.towers.length === 0) {
+        this.state = 'BLACK';
+        this.blackScreenTime = this.elapsed;
+      }
     }
   }
 
   handleMouseDown(e: MouseEvent) {
     if (this.state === 'WINNER' || this.state === 'BLACK') {
       this.reset();
-      return;
     }
     if (this.state === 'BATTLE') return;
 
@@ -178,7 +185,7 @@ export class Game {
   }
 
   handleMouseUp() {
-    // Towers persist after mouse lift
+    // Towers persist after mouse lift (can't track individual mouse buttons)
   }
 
   addTower(touchId: number, x: number, y: number) {
@@ -214,7 +221,6 @@ export class Game {
     this.guidedMissileTimer = 0;
     this.deathCounter = 0;
 
-    // Single tower = indestructible
     if (this.towers.length === 1) {
       this.towers[0].invincible = true;
     }
@@ -256,7 +262,6 @@ export class Game {
     if (this.state === 'BATTLE') {
       const battleTime = this.elapsed - this.battleStartTime;
 
-      // Escalation: add +1 cannon every 3 seconds
       if (this.elapsed - this.lastCannonEscalation >= 3) {
         this.lastCannonEscalation = this.elapsed;
         for (const tower of this.towers) {
@@ -266,7 +271,6 @@ export class Game {
         }
       }
 
-      // After 10 seconds: guided missiles
       if (battleTime >= 10 && !this.guidedMissileActive) {
         this.guidedMissileActive = true;
         this.guidedMissileTimer = 0;
@@ -291,7 +295,6 @@ export class Game {
       const wasAlive = tower.alive;
       const result = tower.update(dt, this.elapsed);
 
-      // Tower died from withdrawal (finger removed, shrunk to 0)
       if (wasAlive && !tower.alive) {
         this.deathCounter++;
         tower.lastDeathOrder = this.deathCounter;
@@ -309,7 +312,6 @@ export class Game {
     for (let i = this.bullets.length - 1; i >= 0; i--) {
       const bullet = this.bullets[i];
 
-      // Update guided missile targets
       if (bullet.guided) {
         const enemies = this.towers.filter(t => t.alive && t.id !== bullet.sourceId && !t.invincible);
         if (enemies.length > 0) {
@@ -333,12 +335,10 @@ export class Game {
         continue;
       }
 
-      // Collision
       let hitSomething = false;
       for (const tower of this.towers) {
         if (!tower.alive || tower.id === bullet.sourceId) continue;
         if (tower.invincible) continue;
-        // Can't hit withdrawn towers
         if (tower.withdrawScale < 0.3) continue;
         const d = dist(bullet.x, bullet.y, tower.x + tower.shakeX, tower.y + tower.shakeY);
         if (d < tower.radius * tower.scale * tower.withdrawScale + bullet.radius) {
@@ -361,15 +361,13 @@ export class Game {
       }
     }
 
-    // Update particles
     this.particles.update(dt);
 
-    // Update victory arrows
     if (this.victoryArrows) {
       this.victoryArrows.update(dt);
     }
 
-    // Check for winner — no draw allowed, always pick one
+    // Check for winner
     if (this.state === 'BATTLE') {
       const aliveTowers = this.towers.filter(t => t.alive);
       if (aliveTowers.length <= 1) {
@@ -379,11 +377,15 @@ export class Game {
         if (aliveTowers.length === 1) {
           winner = aliveTowers[0];
         } else {
-          // All dead simultaneously: last to die wins (highest deathOrder)
           winner = this.towers.reduce((a, b) => a.lastDeathOrder > b.lastDeathOrder ? a : b);
           winner.alive = true;
           winner.hp = 1;
         }
+        // Winner is invincible — can't disappear
+        winner.invincible = true;
+        winner.withdrawing = false;
+        winner.withdrawScale = 1;
+        winner.hasFinger = true;
         this.victoryArrows = new VictoryArrows(winner.x, winner.y, winner.color, this.width, this.height);
         this.particles.celebrationBurst(winner.x, winner.y, 80);
       }
@@ -394,6 +396,7 @@ export class Game {
     const ctx = this.ctx;
     const w = this.width;
     const h = this.height;
+    const s = t();
 
     // BLACK state
     if (this.state === 'BLACK') {
@@ -404,7 +407,7 @@ export class Game {
       ctx.font = '20px -apple-system, sans-serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText('Tap to start again', w / 2, h / 2);
+      ctx.fillText(s.tapAgain, w / 2, h / 2);
       return;
     }
 
@@ -463,20 +466,20 @@ export class Game {
       ctx.fillStyle = 'rgba(255,255,255,0.3)';
       ctx.font = '14px -apple-system, sans-serif';
       ctx.textAlign = 'left';
-      ctx.fillText(`Cannons: ${cannonCount}`, 10, 25);
+      ctx.fillText(`${s.cannons}: ${cannonCount}`, 10, 25);
 
       if (battleTime >= 8 && !this.guidedMissileActive) {
         const warn = Math.sin(this.elapsed * 6) > 0 ? 0.8 : 0.2;
         ctx.fillStyle = `rgba(255,100,100,${warn})`;
         ctx.font = 'bold 16px -apple-system, sans-serif';
         ctx.textAlign = 'center';
-        ctx.fillText('GUIDED MISSILES INCOMING', w / 2, 25);
+        ctx.fillText(s.missilesIncoming, w / 2, 25);
       }
       if (this.guidedMissileActive) {
         ctx.fillStyle = 'rgba(255,50,50,0.6)';
         ctx.font = 'bold 14px -apple-system, sans-serif';
         ctx.textAlign = 'center';
-        ctx.fillText('GUIDED MISSILES ACTIVE', w / 2, 25);
+        ctx.fillText(s.missilesActive, w / 2, 25);
       }
     }
 
@@ -487,14 +490,14 @@ export class Game {
       ctx.font = 'bold 28px -apple-system, sans-serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText('Place your fingers', w / 2, h / 2);
+      ctx.fillText(s.placeFingers, w / 2, h / 2);
     }
 
     if (this.state === 'PLACING' && this.towers.length < 2) {
       ctx.fillStyle = 'rgba(255,255,255,0.4)';
       ctx.font = '20px -apple-system, sans-serif';
       ctx.textAlign = 'center';
-      ctx.fillText('Need at least 2 players', w / 2, 40);
+      ctx.fillText(s.needPlayers, w / 2, 40);
     }
 
     if (this.state === 'WINNER') {
@@ -503,10 +506,10 @@ export class Game {
       ctx.fillStyle = `rgba(255,255,255,${fadeIn * 0.8})`;
       ctx.font = 'bold 36px -apple-system, sans-serif';
       ctx.textAlign = 'center';
-      ctx.fillText('WINNER!', w / 2, 60);
+      ctx.fillText(s.winner, w / 2, 60);
       ctx.font = '18px -apple-system, sans-serif';
       ctx.fillStyle = `rgba(255,255,255,${fadeIn * 0.4})`;
-      ctx.fillText('Tap to play again', w / 2, h - 40);
+      ctx.fillText(s.tapAgain, w / 2, h - 40);
 
       if (aliveTowers.length === 1 && Math.random() < 0.03) {
         const winner = aliveTowers[0];

@@ -1,4 +1,7 @@
 import { Game } from './game';
+import { initI18n } from './i18n';
+
+initI18n();
 
 const canvas = document.getElementById('game') as HTMLCanvasElement;
 const game = new Game(canvas);
