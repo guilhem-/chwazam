@@ -3,5 +3,8 @@ dist/
 android/
 .capacitor/
 *.apk
+*.keystore
+*.jks
+.env
 CLAUDE.md
 .claude/
