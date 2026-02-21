@@ -32,6 +32,7 @@ export class Game {
   nextTowerId = 0;
   activeTouches = new Map<number, number>(); // touchId -> towerId
   deathCounter = 0; // tracks order of deaths for no-draw rule
+  mouseClickCounter = 0; // unique ID for each mouse click
 
   textPulse = 0;
 
@@ -170,7 +171,7 @@ export class Game {
     }
     if (this.state === 'BATTLE') return;
 
-    const fakeId = 1000 + e.button;
+    const fakeId = 10000 + this.mouseClickCounter++;
     this.addTower(fakeId, e.clientX, e.clientY);
     this.state = 'PLACING';
     this.countdownStart = this.elapsed;
@@ -202,6 +203,7 @@ export class Game {
     this.guidedMissileTimer = 0;
     this.lastCannonEscalation = 0;
     this.deathCounter = 0;
+    this.mouseClickCounter = 0;
   }
 
   startBattle() {
