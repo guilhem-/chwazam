@@ -35,6 +35,27 @@ export class ParticleSystem {
     }
   }
 
+  nukeBurst(x: number, y: number, count = 120) {
+    const colors = ['#FF6600', '#FF8800', '#CC4400', '#FFB347', '#8B4513', '#FFD700'];
+    for (let i = 0; i < count; i++) {
+      const color = colors[Math.floor(Math.random() * colors.length)];
+      const { r, g, b } = hexToRgb(color);
+      const angle = randomRange(0, Math.PI * 2);
+      // Bias upward: reduce vy
+      const speed = randomRange(40, 250);
+      const life = randomRange(1, 3);
+      this.particles.push({
+        x, y,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed - randomRange(50, 200),
+        life,
+        maxLife: life,
+        size: randomRange(4, 15),
+        r, g, b,
+      });
+    }
+  }
+
   celebrationBurst(x: number, y: number, count = 30) {
     const colors = ['#FFD700', '#FF6B6B', '#4ECDC4', '#FFEAA7', '#FF8C42'];
     for (const color of colors) {

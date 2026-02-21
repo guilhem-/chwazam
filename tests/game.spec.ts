@@ -102,13 +102,18 @@ for (const fingerCount of [2, 3, 4, 5]) {
       // Wait for BATTLE
       await waitForState(page, 'BATTLE', 10000);
 
-      // Remove last finger after 2 + random(2) seconds into battle
-      const removeDelay = 2000 + Math.random() * 2000;
-      await page.waitForTimeout(removeDelay);
-      await removeLastFinger(page, fingerCount, positions);
+      // Only remove a finger when 3+ players (removing with 2 leaves 1 → PLACING, no winner)
+      const willRemove = fingerCount >= 3;
+      if (willRemove) {
+        const removeDelay = 2000 + Math.random() * 2000;
+        await page.waitForTimeout(removeDelay);
+        await removeLastFinger(page, fingerCount, positions);
+      }
 
       // Wait for WINNER (no draw)
       await waitForState(page, 'WINNER', 45000);
+
+      const expectedTowers = willRemove ? fingerCount - 1 : fingerCount;
 
       const result = await page.evaluate(() => {
         const game = (window as any).__chwazam;
@@ -120,7 +125,7 @@ for (const fingerCount of [2, 3, 4, 5]) {
       });
 
       expect(result.state).toBe('WINNER');
-      expect(result.totalTowers).toBe(fingerCount);
+      expect(result.totalTowers).toBe(expectedTowers);
       expect(result.aliveTowers).toBe(1);
     });
   }

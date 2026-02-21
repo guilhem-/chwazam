@@ -25,3 +25,7 @@ export function easeOutBack(t: number): number {
 export function easeOutQuad(t: number): number {
   return 1 - (1 - t) * (1 - t);
 }
+
+export function easeInQuad(t: number): number {
+  return t * t;
+}

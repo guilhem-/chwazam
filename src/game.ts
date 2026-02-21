@@ -4,10 +4,11 @@ import { ParticleSystem } from './particles';
 import { VictoryArrows } from './victory';
 import { TOWER_COLORS } from './colors';
 import { dist, angleBetween, randomRange } from './utils';
+import { NukeAnimation } from './nuke';
 import { t } from './i18n';
 import { createPRNG, type PRNG } from './prng';
 
-export type GameState = 'WAITING' | 'PLACING' | 'COUNTDOWN' | 'BATTLE' | 'WINNER' | 'BLACK';
+export type GameState = 'WAITING' | 'PLACING' | 'COUNTDOWN' | 'BATTLE' | 'NUKE' | 'WINNER' | 'BLACK';
 
 export class Game {
   canvas: HTMLCanvasElement;
@@ -41,6 +42,7 @@ export class Game {
   simPrng: PRNG | null = null;
   chosenWinnerId = -1;
   winningSeed = -1;
+  nukeAnimation: NukeAnimation | null = null;
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -90,6 +92,9 @@ export class Game {
   }
 
   handleTouchStart(e: TouchEvent) {
+    // Ignore touches during nuke animation
+    if (this.state === 'NUKE') return;
+
     // WINNER/BLACK: reset and immediately place the new fingers as towers
     if (this.state === 'WINNER' || this.state === 'BLACK') {
       this.reset();
@@ -130,7 +135,7 @@ export class Game {
 
   handleTouchMove(e: TouchEvent) {
     // Only track finger positions before battle
-    if (this.state === 'BATTLE' || this.state === 'WINNER') return;
+    if (this.state === 'BATTLE' || this.state === 'WINNER' || this.state === 'NUKE') return;
 
     for (let i = 0; i < e.changedTouches.length; i++) {
       const touch = e.changedTouches[i];
@@ -146,17 +151,18 @@ export class Game {
   }
 
   handleTouchEnd(e: TouchEvent) {
+    // Ignore touches during nuke animation
+    if (this.state === 'NUKE') return;
+
     for (let i = 0; i < e.changedTouches.length; i++) {
       const touch = e.changedTouches[i];
       const towerId = this.activeTouches.get(touch.identifier);
       this.activeTouches.delete(touch.identifier);
 
-      // During battle: tower starts withdrawing
+      // During battle: return to countdown
       if (this.state === 'BATTLE' && towerId !== undefined) {
-        const tower = this.towers.find(t => t.id === towerId);
-        if (tower && tower.alive) {
-          tower.fingerRemoved();
-        }
+        this.returnToCountdown();
+        return;
       }
 
       // Before battle: remove the tower when finger lifts
@@ -173,6 +179,39 @@ export class Game {
       if (this.towers.length === 0) {
         this.state = 'BLACK';
         this.blackScreenTime = this.elapsed;
+      }
+    }
+  }
+
+  returnToCountdown() {
+    this.state = 'COUNTDOWN';
+    this.countdownDuration = 2;
+    this.countdownStart = this.elapsed;
+
+    // Clear battle state
+    this.bullets = [];
+    this.guidedMissileActive = false;
+    this.guidedMissileTimer = 0;
+    this.simPrng = null;
+    this.chosenWinnerId = -1;
+    this.winningSeed = -1;
+
+    // Reset all towers for countdown
+    for (const tower of this.towers) {
+      tower.resetForCountdown();
+    }
+
+    // Remove towers whose fingers are no longer touching
+    const activeTowerIds = new Set(this.activeTouches.values());
+    this.towers = this.towers.filter(t => activeTowerIds.has(t.id));
+
+    // If < 2 towers remain, go to PLACING or BLACK
+    if (this.towers.length < 2) {
+      if (this.activeTouches.size === 0) {
+        this.state = 'BLACK';
+        this.blackScreenTime = this.elapsed;
+      } else {
+        this.state = 'PLACING';
       }
     }
   }
@@ -209,6 +248,7 @@ export class Game {
     this.bullets = [];
     this.particles = new ParticleSystem();
     this.victoryArrows = null;
+    this.nukeAnimation = null;
     this.nextTowerId = 0;
     this.activeTouches.clear();
     this.guidedMissileActive = false;
@@ -219,18 +259,19 @@ export class Game {
     this.simPrng = null;
     this.chosenWinnerId = -1;
     this.winningSeed = -1;
+    this.countdownDuration = 3;
   }
 
   /** Run a headless simulation with the given seed. Returns the id of the winning tower, or -1 if no clear winner. */
-  private runHeadlessSim(towerSnapshots: { id: number; x: number; y: number; color: string }[], seed: number, canvasW: number, canvasH: number): number {
+  private runHeadlessSim(towerSnapshots: { id: number; x: number; y: number; color: string }[], seed: number, canvasW: number, canvasH: number, startElapsed: number): number {
     const prng = createPRNG(seed);
     const dt = 1 / 60;
-    let simElapsed = 0;
+    let simElapsed = startElapsed;
 
     // Create fresh towers from snapshots
     const towers: Tower[] = towerSnapshots.map(s => {
       const t = new Tower(s.id, s.x, s.y, s.color);
-      t.spawnTime = 0;
+      t.spawnTime = startElapsed;
       t.scale = 1;
       return t;
     });
@@ -253,7 +294,9 @@ export class Game {
     const maxTicks = 3600; // 60 seconds at 60fps
 
     for (let tick = 0; tick < maxTicks; tick++) {
-      simElapsed += dt;
+      // NOTE: simElapsed is incremented at the END of the loop to match the
+      // real game, where startBattle() is called mid-update and battle logic
+      // runs immediately at the current this.elapsed before the next += dt.
 
       // Cannon escalation every 3s
       if (simElapsed - lastCannonEscalation >= 3) {
@@ -266,7 +309,7 @@ export class Game {
       }
 
       // Guided missiles after 10s
-      const battleTime = simElapsed;
+      const battleTime = simElapsed - startElapsed;
       if (battleTime >= 10 && !guidedMissileActive) {
         guidedMissileActive = true;
         guidedMissileTimer = 0;
@@ -375,6 +418,8 @@ export class Game {
         const lastDead = towers.reduce((a, b) => a.lastDeathOrder > b.lastDeathOrder ? a : b);
         return lastDead.id;
       }
+
+      simElapsed += dt;
     }
 
     // Timeout — no winner found
@@ -382,9 +427,9 @@ export class Game {
   }
 
   /** Find a seed where chosenWinnerId wins. Returns the seed, or -1 if not found. */
-  private findWinningScenario(towerSnapshots: { id: number; x: number; y: number; color: string }[], chosenWinnerId: number, canvasW: number, canvasH: number): number {
+  private findWinningScenario(towerSnapshots: { id: number; x: number; y: number; color: string }[], chosenWinnerId: number, canvasW: number, canvasH: number, startElapsed: number): number {
     for (let seed = 0; seed < 2000; seed++) {
-      const winnerId = this.runHeadlessSim(towerSnapshots, seed, canvasW, canvasH);
+      const winnerId = this.runHeadlessSim(towerSnapshots, seed, canvasW, canvasH, startElapsed);
       if (winnerId === chosenWinnerId) {
         return seed;
       }
@@ -393,7 +438,6 @@ export class Game {
   }
 
   startBattle() {
-    this.state = 'BATTLE';
     this.battleStartTime = this.elapsed;
     this.lastCannonEscalation = this.elapsed;
     this.guidedMissileActive = false;
@@ -401,6 +445,7 @@ export class Game {
     this.deathCounter = 0;
 
     if (this.towers.length === 1) {
+      this.state = 'BATTLE';
       this.towers[0].invincible = true;
       this.simPrng = null;
       for (const tower of this.towers) {
@@ -418,20 +463,22 @@ export class Game {
     this.chosenWinnerId = chosenWinnerId;
 
     // Find a seed that produces this winner
-    this.winningSeed = this.findWinningScenario(snapshots, chosenWinnerId, this.width, this.height);
+    this.winningSeed = this.findWinningScenario(snapshots, chosenWinnerId, this.width, this.height, this.elapsed);
 
     if (this.winningSeed >= 0) {
       // Replay with the winning seed
+      this.state = 'BATTLE';
       this.simPrng = createPRNG(this.winningSeed);
-    } else {
-      // Fallback: couldn't find a winning seed, use a random seed (rare)
-      this.simPrng = createPRNG(Math.floor(Math.random() * 100000));
-    }
 
-    for (const tower of this.towers) {
-      // Ensure tower scale matches headless sim (fully scaled at battle start)
-      tower.scale = 1;
-      tower.startBattle(this.elapsed, this.simPrng);
+      for (const tower of this.towers) {
+        tower.scale = 1;
+        tower.startBattle(this.elapsed, this.simPrng);
+      }
+    } else {
+      // No winning seed found — launch nuke
+      this.state = 'NUKE';
+      const winner = this.towers.find(t => t.id === chosenWinnerId)!;
+      this.nukeAnimation = new NukeAnimation(winner, this.towers, this.width, this.height, this.particles);
     }
   }
 
@@ -576,6 +623,22 @@ export class Game {
       this.victoryArrows.update(dt);
     }
 
+    // NUKE state update
+    if (this.state === 'NUKE' && this.nukeAnimation) {
+      this.nukeAnimation.update(dt);
+      if (this.nukeAnimation.finished) {
+        this.state = 'WINNER';
+        this.winnerTime = this.elapsed;
+        const winner = this.nukeAnimation.winner;
+        winner.invincible = true;
+        winner.withdrawing = false;
+        winner.withdrawScale = 1;
+        winner.hasFinger = true;
+        this.victoryArrows = new VictoryArrows(winner.x, winner.y, winner.color, this.width, this.height);
+        this.particles.celebrationBurst(winner.x, winner.y, 80);
+      }
+    }
+
     // Check for winner
     if (this.state === 'BATTLE') {
       const aliveTowers = this.towers.filter(t => t.alive);
@@ -647,7 +710,7 @@ export class Game {
     }
 
     // Draw "W" marker on the pre-selected winner
-    if ((this.state === 'BATTLE' || this.state === 'WINNER') && this.chosenWinnerId >= 0) {
+    if ((this.state === 'BATTLE' || this.state === 'NUKE' || this.state === 'WINNER') && this.chosenWinnerId >= 0) {
       const chosen = this.towers.find(t => t.id === this.chosenWinnerId);
       if (chosen) {
         ctx.save();
@@ -670,6 +733,11 @@ export class Game {
 
     // Draw particles
     this.particles.draw(ctx);
+
+    // Nuke animation overlay
+    if (this.state === 'NUKE' && this.nukeAnimation) {
+      this.nukeAnimation.draw(ctx);
+    }
 
     // Countdown ring
     if (this.state === 'COUNTDOWN') {

@@ -92,6 +92,21 @@ export class Tower {
     this.addCannon(elapsed, prng);
   }
 
+  resetForCountdown() {
+    this.hp = this.maxHp;
+    this.alive = true;
+    this.invincible = false;
+    this.cannons = [];
+    this.cannonVisible = false;
+    this.flashTimer = 0;
+    this.shakeTimer = 0;
+    this.shakeX = 0;
+    this.shakeY = 0;
+    this.withdrawing = false;
+    this.withdrawScale = 1;
+    this.lastDeathOrder = 0;
+  }
+
   fingerRemoved() {
     this.hasFinger = false;
     this.withdrawing = true;

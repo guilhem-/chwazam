@@ -10,14 +10,20 @@ const game = new Game(canvas);
 (window as any).__chwazam = game;
 
 let lastTime = 0;
+let accumulator = 0;
+const FIXED_DT = 1 / 60;
 
 function loop(time: number) {
-  const dt = Math.min(0.05, (time - lastTime) / 1000); // cap at 50ms to avoid spiral
+  const frameDt = Math.min(0.05, (time - lastTime) / 1000);
   lastTime = time;
+  accumulator += frameDt;
 
-  game.update(dt);
+  while (accumulator >= FIXED_DT) {
+    game.update(FIXED_DT);
+    accumulator -= FIXED_DT;
+  }
+
   game.draw();
-
   requestAnimationFrame(loop);
 }
 
