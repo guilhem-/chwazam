@@ -31,8 +31,8 @@ export class Game {
 
   nextTowerId = 0;
   activeTouches = new Map<number, number>(); // touchId -> towerId
+  deathCounter = 0; // tracks order of deaths for no-draw rule
 
-  // Pulsing text
   textPulse = 0;
 
   constructor(canvas: HTMLCanvasElement) {
@@ -59,6 +59,11 @@ export class Game {
       this.handleTouchStart(e);
     }, { passive: false });
 
+    this.canvas.addEventListener('touchmove', (e) => {
+      e.preventDefault();
+      this.handleTouchMove(e);
+    }, { passive: false });
+
     this.canvas.addEventListener('touchend', (e) => {
       e.preventDefault();
       this.handleTouchEnd(e);
@@ -73,7 +78,6 @@ export class Game {
     this.canvas.addEventListener('mousedown', (e) => {
       this.handleMouseDown(e);
     });
-
     this.canvas.addEventListener('mouseup', () => {
       this.handleMouseUp();
     });
@@ -84,8 +88,33 @@ export class Game {
       this.reset();
       return;
     }
-    if (this.state === 'BATTLE') return;
 
+    // During battle: re-associate fingers with nearby dormant towers
+    if (this.state === 'BATTLE') {
+      for (let i = 0; i < e.changedTouches.length; i++) {
+        const touch = e.changedTouches[i];
+        // Find nearest alive withdrawn tower
+        let nearest: Tower | null = null;
+        let nearestDist = 100; // max reactivation distance
+        for (const tower of this.towers) {
+          if (!tower.alive || tower.hasFinger) continue;
+          const d = dist(touch.clientX, touch.clientY, tower.x, tower.y);
+          if (d < nearestDist) {
+            nearest = tower;
+            nearestDist = d;
+          }
+        }
+        if (nearest) {
+          nearest.fingerRestored();
+          nearest.x = touch.clientX;
+          nearest.y = touch.clientY;
+          this.activeTouches.set(touch.identifier, nearest.id);
+        }
+      }
+      return;
+    }
+
+    // Place all new fingers at once
     for (let i = 0; i < e.changedTouches.length; i++) {
       const touch = e.changedTouches[i];
       this.addTower(touch.identifier, touch.clientX, touch.clientY);
@@ -95,10 +124,34 @@ export class Game {
     this.countdownStart = this.elapsed;
   }
 
+  handleTouchMove(e: TouchEvent) {
+    // Before battle: disks track finger positions
+    for (let i = 0; i < e.changedTouches.length; i++) {
+      const touch = e.changedTouches[i];
+      const towerId = this.activeTouches.get(touch.identifier);
+      if (towerId !== undefined) {
+        const tower = this.towers.find(t => t.id === towerId);
+        if (tower && (this.state !== 'BATTLE' || tower.hasFinger)) {
+          tower.x = touch.clientX;
+          tower.y = touch.clientY;
+        }
+      }
+    }
+  }
+
   handleTouchEnd(e: TouchEvent) {
     for (let i = 0; i < e.changedTouches.length; i++) {
       const touch = e.changedTouches[i];
+      const towerId = this.activeTouches.get(touch.identifier);
       this.activeTouches.delete(touch.identifier);
+
+      // During battle: tower starts withdrawing
+      if (this.state === 'BATTLE' && towerId !== undefined) {
+        const tower = this.towers.find(t => t.id === towerId);
+        if (tower && tower.alive) {
+          tower.fingerRemoved();
+        }
+      }
     }
 
     // Screen goes black if all fingers removed during PLACING/COUNTDOWN
@@ -124,7 +177,7 @@ export class Game {
   }
 
   handleMouseUp() {
-    // Towers persist after finger/mouse lift
+    // Towers persist after mouse lift
   }
 
   addTower(touchId: number, x: number, y: number) {
@@ -148,6 +201,7 @@ export class Game {
     this.guidedMissileActive = false;
     this.guidedMissileTimer = 0;
     this.lastCannonEscalation = 0;
+    this.deathCounter = 0;
   }
 
   startBattle() {
@@ -156,13 +210,13 @@ export class Game {
     this.lastCannonEscalation = this.elapsed;
     this.guidedMissileActive = false;
     this.guidedMissileTimer = 0;
+    this.deathCounter = 0;
 
     // Single tower = indestructible
     if (this.towers.length === 1) {
       this.towers[0].invincible = true;
     }
 
-    // Start first cannon on each tower
     for (const tower of this.towers) {
       tower.startBattle(this.elapsed);
     }
@@ -172,7 +226,6 @@ export class Game {
     const enemies = this.towers.filter(t => t.alive && t.id !== tower.id && !t.invincible);
     if (enemies.length === 0) return;
     const target = enemies[Math.floor(Math.random() * enemies.length)];
-    // Fire from a random cannon position
     const c = tower.cannons.length > 0 ? tower.cannons[Math.floor(Math.random() * tower.cannons.length)] : null;
     const fireX = c ? tower.x + Math.cos(c.orbitAngle) * tower.radius : tower.x;
     const fireY = c ? tower.y + Math.sin(c.orbitAngle) * tower.radius : tower.y;
@@ -205,7 +258,7 @@ export class Game {
       if (this.elapsed - this.lastCannonEscalation >= 3) {
         this.lastCannonEscalation = this.elapsed;
         for (const tower of this.towers) {
-          if (tower.alive) {
+          if (tower.alive && tower.withdrawScale > 0.5) {
             tower.addCannon(this.elapsed);
           }
         }
@@ -220,9 +273,9 @@ export class Game {
       if (this.guidedMissileActive) {
         this.guidedMissileTimer -= dt;
         if (this.guidedMissileTimer <= 0) {
-          this.guidedMissileTimer = 1.5; // fire guided missile every 1.5s
+          this.guidedMissileTimer = 1.5;
           for (const tower of this.towers) {
-            if (tower.alive) {
+            if (tower.alive && tower.withdrawScale > 0.5) {
               this.fireGuidedMissile(tower);
             }
           }
@@ -233,19 +286,19 @@ export class Game {
     // Update towers
     for (const tower of this.towers) {
       if (!tower.alive) continue;
+      const wasAlive = tower.alive;
       const result = tower.update(dt, this.elapsed);
+
+      // Tower died from withdrawal (finger removed, shrunk to 0)
+      if (wasAlive && !tower.alive) {
+        this.deathCounter++;
+        tower.lastDeathOrder = this.deathCounter;
+        this.particles.burst(tower.x, tower.y, tower.color, 70);
+      }
 
       if (this.state === 'BATTLE') {
         for (const fire of result.fires) {
-          // Aim at a random alive enemy
-          const enemies = this.towers.filter(t => t.alive && t.id !== tower.id);
-          if (enemies.length > 0) {
-            const target = enemies[Math.floor(Math.random() * enemies.length)];
-            const aimAngle = angleBetween(fire.x, fire.y, target.x, target.y);
-            const spread = (Math.random() - 0.5) * 0.52;
-            const fireAngle = aimAngle + spread;
-            this.bullets.push(new Bullet(fire.x, fire.y, fireAngle, tower.color, tower.id));
-          }
+          this.bullets.push(new Bullet(fire.x, fire.y, fire.angle, tower.color, tower.id));
         }
       }
     }
@@ -254,11 +307,10 @@ export class Game {
     for (let i = this.bullets.length - 1; i >= 0; i--) {
       const bullet = this.bullets[i];
 
-      // Update guided missile targets to track living enemies
+      // Update guided missile targets
       if (bullet.guided) {
         const enemies = this.towers.filter(t => t.alive && t.id !== bullet.sourceId && !t.invincible);
         if (enemies.length > 0) {
-          // Find nearest enemy
           let nearest = enemies[0];
           let nearestDist = dist(bullet.x, bullet.y, nearest.x, nearest.y);
           for (let j = 1; j < enemies.length; j++) {
@@ -283,14 +335,17 @@ export class Game {
       let hitSomething = false;
       for (const tower of this.towers) {
         if (!tower.alive || tower.id === bullet.sourceId) continue;
-        // Skip invincible towers
         if (tower.invincible) continue;
+        // Can't hit withdrawn towers
+        if (tower.withdrawScale < 0.3) continue;
         const d = dist(bullet.x, bullet.y, tower.x + tower.shakeX, tower.y + tower.shakeY);
-        if (d < tower.radius * tower.scale + bullet.radius) {
+        if (d < tower.radius * tower.scale * tower.withdrawScale + bullet.radius) {
           const wasHit = tower.hit();
           if (wasHit) {
             bullet.alive = false;
             if (!tower.alive) {
+              this.deathCounter++;
+              tower.lastDeathOrder = this.deathCounter;
               this.particles.burst(tower.x, tower.y, tower.color, 70);
             }
             hitSomething = true;
@@ -312,17 +367,23 @@ export class Game {
       this.victoryArrows.update(dt);
     }
 
-    // Check for winner
+    // Check for winner — no draw allowed, always pick one
     if (this.state === 'BATTLE') {
       const aliveTowers = this.towers.filter(t => t.alive);
       if (aliveTowers.length <= 1) {
         this.state = 'WINNER';
         this.winnerTime = this.elapsed;
+        let winner: Tower;
         if (aliveTowers.length === 1) {
-          const winner = aliveTowers[0];
-          this.victoryArrows = new VictoryArrows(winner.x, winner.y, winner.color);
-          this.particles.celebrationBurst(winner.x, winner.y, 80);
+          winner = aliveTowers[0];
+        } else {
+          // All dead simultaneously: last to die wins (highest deathOrder)
+          winner = this.towers.reduce((a, b) => a.lastDeathOrder > b.lastDeathOrder ? a : b);
+          winner.alive = true;
+          winner.hp = 1;
         }
+        this.victoryArrows = new VictoryArrows(winner.x, winner.y, winner.color, this.width, this.height);
+        this.particles.celebrationBurst(winner.x, winner.y, 80);
       }
     }
   }
@@ -332,7 +393,7 @@ export class Game {
     const w = this.width;
     const h = this.height;
 
-    // BLACK state: pure black screen
+    // BLACK state
     if (this.state === 'BLACK') {
       ctx.fillStyle = '#000';
       ctx.fillRect(0, 0, w, h);
@@ -349,21 +410,20 @@ export class Game {
     ctx.fillStyle = '#1a1a2e';
     ctx.fillRect(0, 0, w, h);
 
-    // Subtle grid pattern
+    // Subtle grid
     ctx.strokeStyle = 'rgba(255,255,255,0.03)';
     ctx.lineWidth = 1;
     const gridSize = 40;
     for (let x = 0; x < w; x += gridSize) {
-      ctx.beginPath();
-      ctx.moveTo(x, 0);
-      ctx.lineTo(x, h);
-      ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke();
     }
     for (let y = 0; y < h; y += gridSize) {
-      ctx.beginPath();
-      ctx.moveTo(0, y);
-      ctx.lineTo(w, y);
-      ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
+    }
+
+    // Victory arrows (behind towers)
+    if (this.victoryArrows) {
+      this.victoryArrows.draw(ctx);
     }
 
     // Draw towers
@@ -380,12 +440,7 @@ export class Game {
     // Draw particles
     this.particles.draw(ctx);
 
-    // Draw victory arrows
-    if (this.victoryArrows) {
-      this.victoryArrows.draw(ctx);
-    }
-
-    // Countdown ring on each tower
+    // Countdown ring
     if (this.state === 'COUNTDOWN') {
       const progress = (this.elapsed - this.countdownStart) / this.countdownDuration;
       for (const tower of this.towers) {
@@ -399,18 +454,15 @@ export class Game {
       }
     }
 
-    // Battle timer indicators
+    // Battle HUD
     if (this.state === 'BATTLE') {
       const battleTime = this.elapsed - this.battleStartTime;
-
-      // Cannon count indicator
       const cannonCount = this.towers.find(t => t.alive)?.cannons.length ?? 0;
       ctx.fillStyle = 'rgba(255,255,255,0.3)';
       ctx.font = '14px -apple-system, sans-serif';
       ctx.textAlign = 'left';
       ctx.fillText(`Cannons: ${cannonCount}`, 10, 25);
 
-      // Guided missile warning
       if (battleTime >= 8 && !this.guidedMissileActive) {
         const warn = Math.sin(this.elapsed * 6) > 0 ? 0.8 : 0.2;
         ctx.fillStyle = `rgba(255,100,100,${warn})`;
@@ -449,16 +501,11 @@ export class Game {
       ctx.fillStyle = `rgba(255,255,255,${fadeIn * 0.8})`;
       ctx.font = 'bold 36px -apple-system, sans-serif';
       ctx.textAlign = 'center';
-      if (aliveTowers.length === 1) {
-        ctx.fillText('WINNER!', w / 2, 60);
-      } else {
-        ctx.fillText('DRAW!', w / 2, 60);
-      }
+      ctx.fillText('WINNER!', w / 2, 60);
       ctx.font = '18px -apple-system, sans-serif';
       ctx.fillStyle = `rgba(255,255,255,${fadeIn * 0.4})`;
       ctx.fillText('Tap to play again', w / 2, h - 40);
 
-      // Periodic celebration particles
       if (aliveTowers.length === 1 && Math.random() < 0.03) {
         const winner = aliveTowers[0];
         this.particles.celebrationBurst(

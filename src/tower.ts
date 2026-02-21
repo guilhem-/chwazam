@@ -2,14 +2,26 @@ import { hexToRgb, rgbString } from './colors';
 import { randomRange, easeOutBack } from './utils';
 
 export interface Cannon {
-  orbitAngle: number;   // position on the circle perimeter
-  orbitSpeed: number;   // radians per second
-  aimAngle: number;     // direction the barrel points (visual spin)
-  aimSpeed: number;     // barrel spin speed
+  // Global: position on the circle perimeter
+  orbitAngle: number;
+  orbitSpeed: number;
+  // Local: oscillation phase for aim (±90° from tangent)
+  oscillatePhase: number;
+  oscillateSpeed: number;
+  // Firing
   fireTimer: number;
   fireInterval: number;
   spawnTime: number;
   scale: number;
+}
+
+/** Compute the world-space aim angle for a cannon given its orbit angle. */
+function cannonWorldAim(c: Cannon): number {
+  // Tangent direction = orbitAngle + π/2 (perpendicular, pointing "forward" along orbit)
+  const tangent = c.orbitAngle + Math.PI / 2;
+  // Oscillate ±90° around tangent
+  const oscillation = Math.sin(c.oscillatePhase) * (Math.PI / 2);
+  return tangent + oscillation;
 }
 
 export class Tower {
@@ -28,16 +40,23 @@ export class Tower {
   spawnDuration = 0.2;
   scale = 0;
 
-  // Cannons (multiple, orbiting perimeter)
+  // Finger tracking
+  hasFinger = true;
+  withdrawScale = 1;       // 1=full, shrinks to 0 over 1s when finger removed
+  withdrawing = false;
+
+  // Cannons
   cannons: Cannon[] = [];
   cannonVisible = false;
-  lastCannonAddTime = 0;
 
   // Hit effect
   flashTimer = 0;
   shakeTimer = 0;
   shakeX = 0;
   shakeY = 0;
+
+  // Death order tracking (for no-draw rule)
+  lastDeathOrder = 0;
 
   constructor(id: number, x: number, y: number, color: string) {
     this.id = id;
@@ -47,25 +66,35 @@ export class Tower {
   }
 
   addCannon(elapsed: number) {
+    const n = this.cannons.length;
     const cannon: Cannon = {
-      orbitAngle: this.cannons.length === 0
+      orbitAngle: n === 0
         ? randomRange(0, Math.PI * 2)
-        : this.cannons[this.cannons.length - 1].orbitAngle + Math.PI * 2 / (this.cannons.length + 1),
+        : this.cannons[n - 1].orbitAngle + Math.PI * 2 / (n + 1),
       orbitSpeed: randomRange(1.5, 3.0) * (Math.random() > 0.5 ? 1 : -1),
-      aimAngle: randomRange(0, Math.PI * 2),
-      aimSpeed: randomRange(2, 5) * Math.PI * 2,
+      oscillatePhase: randomRange(0, Math.PI * 2),
+      oscillateSpeed: randomRange(2, 4),
       fireTimer: randomRange(0.1, 0.8),
       fireInterval: randomRange(0.4, 1.0),
       spawnTime: elapsed,
       scale: 0,
     };
     this.cannons.push(cannon);
-    this.lastCannonAddTime = elapsed;
   }
 
   startBattle(elapsed: number) {
     this.cannonVisible = true;
     this.addCannon(elapsed);
+  }
+
+  fingerRemoved() {
+    this.hasFinger = false;
+    this.withdrawing = true;
+  }
+
+  fingerRestored() {
+    this.hasFinger = true;
+    this.withdrawing = false;
   }
 
   hit(): boolean {
@@ -88,6 +117,18 @@ export class Tower {
       this.scale = easeOutBack(t);
     }
 
+    // Withdraw: shrink over 1 second when finger removed during battle
+    if (this.withdrawing) {
+      this.withdrawScale = Math.max(0, this.withdrawScale - dt);
+      if (this.withdrawScale <= 0) {
+        // Fully disappeared — tower dies
+        this.alive = false;
+      }
+    } else if (this.withdrawScale < 1) {
+      // Restore when finger comes back
+      this.withdrawScale = Math.min(1, this.withdrawScale + dt * 2);
+    }
+
     // Hit flash
     if (this.flashTimer > 0) this.flashTimer -= dt;
 
@@ -101,29 +142,32 @@ export class Tower {
       this.shakeY = 0;
     }
 
-    // Update each cannon
+    const canFire = this.withdrawScale > 0.5;
+
+    // Update cannons
     for (const c of this.cannons) {
-      // Cannon spawn animation
+      // Spawn animation
       if (c.scale < 1) {
         const t = Math.min(1, (elapsed - c.spawnTime) / 0.4);
         c.scale = easeOutBack(t);
       }
 
-      // Orbit around the perimeter
+      // Orbit: update position on circle
       c.orbitAngle += c.orbitSpeed * dt;
 
-      // Barrel spin (visual)
-      c.aimAngle += c.aimSpeed * dt;
+      // Oscillate local aim
+      c.oscillatePhase += c.oscillateSpeed * dt;
 
       // Fire logic
-      if (c.scale >= 1) {
+      if (c.scale >= 1 && canFire) {
         c.fireTimer -= dt;
         if (c.fireTimer <= 0) {
           c.fireTimer = c.fireInterval;
-          // Fire position is on the perimeter
+          // Position: on the perimeter at orbitAngle
           const cx = this.x + Math.cos(c.orbitAngle) * this.radius;
           const cy = this.y + Math.sin(c.orbitAngle) * this.radius;
-          fires.push({ x: cx, y: cy, angle: c.aimAngle });
+          // Aim: tangent ± 90° oscillation
+          fires.push({ x: cx, y: cy, angle: cannonWorldAim(c) });
         }
       }
     }
@@ -132,32 +176,36 @@ export class Tower {
   }
 
   draw(ctx: CanvasRenderingContext2D) {
+    if (this.withdrawScale <= 0) return;
+
+    const effectiveScale = this.scale * this.withdrawScale;
     const dx = this.x + this.shakeX;
     const dy = this.y + this.shakeY;
-    const r = this.radius * this.scale;
+    const r = this.radius * effectiveScale;
 
     if (r <= 0) return;
 
     const { r: cr, g: cg, b: cb } = hexToRgb(this.color);
+    const baseAlpha = this.withdrawScale;
 
     // Disk shadow
-    ctx.fillStyle = 'rgba(0,0,0,0.3)';
+    ctx.fillStyle = `rgba(0,0,0,${0.3 * baseAlpha})`;
     ctx.beginPath();
     ctx.arc(dx + 3, dy + 3, r, 0, Math.PI * 2);
     ctx.fill();
 
     // Disk
     const grad = ctx.createRadialGradient(dx - r * 0.3, dy - r * 0.3, 0, dx, dy, r);
-    grad.addColorStop(0, rgbString(Math.min(255, cr + 60), Math.min(255, cg + 60), Math.min(255, cb + 60)));
-    grad.addColorStop(1, this.color);
+    grad.addColorStop(0, rgbString(Math.min(255, cr + 60), Math.min(255, cg + 60), Math.min(255, cb + 60), baseAlpha));
+    grad.addColorStop(1, rgbString(cr, cg, cb, baseAlpha));
     ctx.fillStyle = grad;
     ctx.beginPath();
     ctx.arc(dx, dy, r, 0, Math.PI * 2);
     ctx.fill();
 
-    // Invincible shield glow
+    // Invincible shield
     if (this.invincible) {
-      ctx.strokeStyle = 'rgba(255,255,255,0.6)';
+      ctx.strokeStyle = `rgba(255,255,255,${0.6 * baseAlpha})`;
       ctx.lineWidth = 3;
       ctx.shadowColor = '#fff';
       ctx.shadowBlur = 15;
@@ -167,13 +215,15 @@ export class Tower {
       ctx.shadowBlur = 0;
     }
 
-    // HP indicator (ring segments) — only if not invincible
+    // HP indicator
     if (!this.invincible) {
       for (let i = 0; i < this.maxHp; i++) {
         const segAngle = (Math.PI * 2) / this.maxHp;
         const startA = -Math.PI / 2 + i * segAngle + 0.05;
         const endA = -Math.PI / 2 + (i + 1) * segAngle - 0.05;
-        ctx.strokeStyle = i < this.hp ? '#ffffff' : 'rgba(255,255,255,0.15)';
+        ctx.strokeStyle = i < this.hp
+          ? `rgba(255,255,255,${baseAlpha})`
+          : `rgba(255,255,255,${0.15 * baseAlpha})`;
         ctx.lineWidth = 3;
         ctx.beginPath();
         ctx.arc(dx, dy, r + 5, startA, endA);
@@ -181,19 +231,24 @@ export class Tower {
       }
     }
 
-    // Cannons orbiting the perimeter
-    if (this.cannonVisible) {
+    // Cannons
+    if (this.cannonVisible && this.withdrawScale > 0.3) {
       for (const c of this.cannons) {
         if (c.scale <= 0) continue;
-        const cs = c.scale;
+        const cs = c.scale * this.withdrawScale;
+        // Global position on perimeter
         const cx = dx + Math.cos(c.orbitAngle) * r;
         const cy = dy + Math.sin(c.orbitAngle) * r;
+        // Global aim = tangent + oscillation
+        const worldAim = cannonWorldAim(c);
+
         const barrelLen = 20 * cs;
         const barrelW = 6 * cs;
 
         ctx.save();
         ctx.translate(cx, cy);
-        ctx.rotate(c.aimAngle);
+        ctx.rotate(worldAim);
+        ctx.globalAlpha = baseAlpha;
 
         // Barrel
         ctx.fillStyle = '#333';
@@ -211,13 +266,14 @@ export class Tower {
         ctx.arc(0, 0, 4 * cs, 0, Math.PI * 2);
         ctx.fill();
 
+        ctx.globalAlpha = 1;
         ctx.restore();
       }
     }
 
-    // Flash overlay on hit
+    // Flash overlay
     if (this.flashTimer > 0) {
-      ctx.fillStyle = `rgba(255,255,255,${this.flashTimer / 0.1 * 0.6})`;
+      ctx.fillStyle = `rgba(255,255,255,${this.flashTimer / 0.1 * 0.6 * baseAlpha})`;
       ctx.beginPath();
       ctx.arc(dx, dy, r, 0, Math.PI * 2);
       ctx.fill();

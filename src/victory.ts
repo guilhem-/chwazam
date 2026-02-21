@@ -1,10 +1,9 @@
 import { hexToRgb, rgbString } from './colors';
+import { angleBetween } from './utils';
 
 interface Arrow {
   x: number;
   y: number;
-  baseAngle: number;
-  distance: number;
   wobbleOffset: number;
   wobbleSpeed: number;
   size: number;
@@ -17,30 +16,27 @@ export class VictoryArrows {
   color: string;
   time = 0;
 
-  constructor(centerX: number, centerY: number, color: string) {
+  constructor(centerX: number, centerY: number, color: string, screenW: number, screenH: number) {
     this.centerX = centerX;
     this.centerY = centerY;
     this.color = color;
 
-    // Create arrows in expanding rings
-    const rings = [
-      { count: 8, distance: 80, size: 14 },
-      { count: 12, distance: 130, size: 12 },
-      { count: 16, distance: 185, size: 10 },
-    ];
+    // Fill entire screen with arrows on a grid
+    const spacing = 50;
+    const margin = 20;
+    for (let gx = margin; gx < screenW - margin; gx += spacing) {
+      for (let gy = margin; gy < screenH - margin; gy += spacing) {
+        // Skip arrows too close to the winner (leave room for the disk)
+        const dx = gx - centerX;
+        const dy = gy - centerY;
+        if (Math.sqrt(dx * dx + dy * dy) < 60) continue;
 
-    for (const ring of rings) {
-      for (let i = 0; i < ring.count; i++) {
-        const angle = (i / ring.count) * Math.PI * 2;
         this.arrows.push({
-          x: centerX + Math.cos(angle) * ring.distance,
-          y: centerY + Math.sin(angle) * ring.distance,
-          baseAngle: Math.atan2(centerY - (centerY + Math.sin(angle) * ring.distance),
-                                centerX - (centerX + Math.cos(angle) * ring.distance)),
-          distance: ring.distance,
+          x: gx + (Math.random() - 0.5) * 15,
+          y: gy + (Math.random() - 0.5) * 15,
           wobbleOffset: Math.random() * Math.PI * 2,
           wobbleSpeed: 1.5 + Math.random() * 1.5,
-          size: ring.size,
+          size: 10 + Math.random() * 4,
         });
       }
     }
@@ -54,15 +50,21 @@ export class VictoryArrows {
     const { r, g, b } = hexToRgb(this.color);
 
     for (const arrow of this.arrows) {
+      const baseAngle = angleBetween(arrow.x, arrow.y, this.centerX, this.centerY);
       const wobble = Math.sin(this.time * arrow.wobbleSpeed + arrow.wobbleOffset) * 0.3;
-      const pointAngle = arrow.baseAngle + wobble;
+      const pointAngle = baseAngle + wobble;
 
       // Wobble position slightly
       const posWobble = Math.sin(this.time * 2 + arrow.wobbleOffset) * 4;
-      const ax = arrow.x + Math.cos(arrow.baseAngle + Math.PI / 2) * posWobble;
-      const ay = arrow.y + Math.sin(arrow.baseAngle + Math.PI / 2) * posWobble;
+      const ax = arrow.x + Math.cos(baseAngle + Math.PI / 2) * posWobble;
+      const ay = arrow.y + Math.sin(baseAngle + Math.PI / 2) * posWobble;
 
-      const alpha = 0.5 + Math.sin(this.time * 3 + arrow.wobbleOffset) * 0.3;
+      // Fade based on distance from center
+      const dx = arrow.x - this.centerX;
+      const dy = arrow.y - this.centerY;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      const distAlpha = Math.min(1, dist / 200) * 0.6;
+      const alpha = (0.3 + Math.sin(this.time * 3 + arrow.wobbleOffset) * 0.2) * distAlpha;
       const s = arrow.size;
 
       ctx.save();
@@ -76,7 +78,7 @@ export class VictoryArrows {
       // Arrow body
       ctx.fillStyle = rgbString(r, g, b, alpha);
       ctx.beginPath();
-      ctx.moveTo(s, 0);           // tip
+      ctx.moveTo(s, 0);
       ctx.lineTo(-s * 0.6, -s * 0.5);
       ctx.lineTo(-s * 0.3, 0);
       ctx.lineTo(-s * 0.6, s * 0.5);
