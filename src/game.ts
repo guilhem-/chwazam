@@ -325,6 +325,9 @@ export class Game {
             }
           }
           bullet.setTarget(nearest.x, nearest.y);
+        } else {
+          // No targets left — go straight, stop homing
+          bullet.guided = false;
         }
       }
 
