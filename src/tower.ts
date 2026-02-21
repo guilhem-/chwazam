@@ -17,11 +17,13 @@ export interface Cannon {
 
 /** Compute the world-space aim angle for a cannon given its orbit angle. */
 function cannonWorldAim(c: Cannon): number {
-  // Tangent direction = orbitAngle + π/2 (perpendicular, pointing "forward" along orbit)
-  const tangent = c.orbitAngle + Math.PI / 2;
-  // Oscillate ±90° around tangent
+  // Outward radial direction = orbitAngle (points away from disk center)
+  // Oscillate ±90° around outward: sweeps between the two tangent directions
+  // sin=-1 → tangent one way, sin=0 → straight out, sin=+1 → tangent other way
+  // Never aims inward (toward own disk)
+  const outward = c.orbitAngle;
   const oscillation = Math.sin(c.oscillatePhase) * (Math.PI / 2);
-  return tangent + oscillation;
+  return outward + oscillation;
 }
 
 export class Tower {
