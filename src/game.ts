@@ -8,7 +8,16 @@ import { NukeAnimation } from './nuke';
 import { t } from './i18n';
 import { createPRNG, type PRNG } from './prng';
 
-export type GameState = 'WAITING' | 'PLACING' | 'COUNTDOWN' | 'BATTLE' | 'NUKE' | 'WINNER' | 'BLACK';
+export type GameState = 'SPLASH' | 'WAITING' | 'PLACING' | 'COUNTDOWN' | 'BATTLE' | 'NUKE' | 'WINNER' | 'BLACK';
+
+interface SplashArrow {
+  x: number;
+  y: number;
+  angle: number;
+  size: number;
+  wobbleOffset: number;
+  wobbleSpeed: number;
+}
 
 export class Game {
   canvas: HTMLCanvasElement;
@@ -16,7 +25,9 @@ export class Game {
   width = 0;
   height = 0;
 
-  state: GameState = 'WAITING';
+  state: GameState = 'SPLASH';
+  splashArrows: SplashArrow[] = [];
+  splashDuration = 2;
   towers: Tower[] = [];
   bullets: Bullet[] = [];
   particles = new ParticleSystem();
@@ -48,7 +59,55 @@ export class Game {
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d')!;
     this.resize();
+    this.initSplashArrows();
     this.bindEvents();
+  }
+
+  initSplashArrows() {
+    this.splashArrows = [];
+    const w = this.width;
+    const h = this.height;
+    const spacing = Math.round(w * 0.06);
+    const fontSize = Math.round(w * 0.09);
+    const text = 'Chwazam';
+
+    // Measure letter positions
+    const ctx = this.ctx;
+    ctx.font = `bold ${fontSize}px -apple-system, sans-serif`;
+    const totalWidth = ctx.measureText(text).width;
+    const letterPositions: { x: number; y: number }[] = [];
+    let curX = w / 2 - totalWidth / 2;
+    for (let i = 0; i < text.length; i++) {
+      const charW = ctx.measureText(text[i]).width;
+      letterPositions.push({ x: curX + charW / 2, y: h / 2 });
+      curX += charW;
+    }
+
+    const textClearance = fontSize * 1.2;
+
+    for (let gx = spacing / 2; gx < w; gx += spacing) {
+      for (let gy = spacing / 2; gy < h; gy += spacing) {
+        const dx = gx - w / 2;
+        const dy = gy - h / 2;
+        if (Math.abs(dx) < totalWidth / 2 + spacing && Math.abs(dy) < textClearance / 2) continue;
+
+        let nearestDist = Infinity;
+        let nearestLP = letterPositions[0];
+        for (const lp of letterPositions) {
+          const d = Math.sqrt((gx - lp.x) ** 2 + (gy - lp.y) ** 2);
+          if (d < nearestDist) { nearestDist = d; nearestLP = lp; }
+        }
+
+        this.splashArrows.push({
+          x: gx + (Math.random() - 0.5) * spacing * 0.2,
+          y: gy + (Math.random() - 0.5) * spacing * 0.2,
+          angle: Math.atan2(nearestLP.y - gy, nearestLP.x - gx),
+          size: 8 + Math.random() * 4,
+          wobbleOffset: Math.random() * Math.PI * 2,
+          wobbleSpeed: 1.5 + Math.random() * 1.5,
+        });
+      }
+    }
   }
 
   resize() {
@@ -94,6 +153,12 @@ export class Game {
   handleTouchStart(e: TouchEvent) {
     // Ignore touches during nuke animation
     if (this.state === 'NUKE') return;
+
+    // Skip splash on touch
+    if (this.state === 'SPLASH') {
+      this.state = 'WAITING';
+      // Fall through to place fingers below
+    }
 
     // WINNER/BLACK: reset and immediately place the new fingers as towers
     if (this.state === 'WINNER' || this.state === 'BLACK') {
@@ -217,6 +282,9 @@ export class Game {
   }
 
   handleMouseDown(e: MouseEvent) {
+    if (this.state === 'SPLASH') {
+      this.state = 'WAITING';
+    }
     if (this.state === 'WINNER' || this.state === 'BLACK') {
       this.reset();
     }
@@ -500,6 +568,11 @@ export class Game {
     this.elapsed += dt;
     this.textPulse += dt;
 
+    // Splash auto-transition
+    if (this.state === 'SPLASH' && this.elapsed >= this.splashDuration) {
+      this.state = 'WAITING';
+    }
+
     // State transitions
     if (this.state === 'PLACING' || this.state === 'COUNTDOWN') {
       if (this.towers.length >= 2) {
@@ -669,6 +742,57 @@ export class Game {
     const w = this.width;
     const h = this.height;
     const s = t();
+
+    // SPLASH state
+    if (this.state === 'SPLASH') {
+      const fadeIn = Math.min(1, this.elapsed / 0.5);
+      const fadeOut = this.elapsed > this.splashDuration - 0.5
+        ? Math.max(0, (this.splashDuration - this.elapsed) / 0.5)
+        : 1;
+      const alpha = fadeIn * fadeOut;
+
+      ctx.fillStyle = '#1a1a2e';
+      ctx.fillRect(0, 0, w, h);
+
+      // Animated arrows
+      for (const arrow of this.splashArrows) {
+        const wobble = Math.sin(this.elapsed * arrow.wobbleSpeed + arrow.wobbleOffset) * 0.3;
+        const pointAngle = arrow.angle + wobble;
+        const posWobble = Math.sin(this.elapsed * 2 + arrow.wobbleOffset) * 3;
+        const ax = arrow.x + Math.cos(arrow.angle + Math.PI / 2) * posWobble;
+        const ay = arrow.y + Math.sin(arrow.angle + Math.PI / 2) * posWobble;
+        const arrowAlpha = (0.15 + Math.sin(this.elapsed * 3 + arrow.wobbleOffset) * 0.1) * alpha;
+
+        ctx.save();
+        ctx.translate(ax, ay);
+        ctx.rotate(pointAngle);
+        ctx.fillStyle = `rgba(255,59,59,${arrowAlpha})`;
+        ctx.beginPath();
+        const sz = arrow.size;
+        ctx.moveTo(sz, 0);
+        ctx.lineTo(-sz * 0.6, -sz * 0.5);
+        ctx.lineTo(-sz * 0.3, 0);
+        ctx.lineTo(-sz * 0.6, sz * 0.5);
+        ctx.closePath();
+        ctx.fill();
+        ctx.restore();
+      }
+
+      // Text with glow
+      const fontSize = Math.round(w * 0.09);
+      ctx.save();
+      ctx.font = `bold ${fontSize}px -apple-system, sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.shadowColor = 'rgba(255,59,59,0.6)';
+      ctx.shadowBlur = fontSize * 0.3;
+      ctx.fillStyle = `rgba(255,59,59,${alpha})`;
+      ctx.fillText('Chwazam', w / 2, h / 2);
+      ctx.shadowBlur = 0;
+      ctx.fillText('Chwazam', w / 2, h / 2);
+      ctx.restore();
+      return;
+    }
 
     // BLACK state
     if (this.state === 'BLACK') {
