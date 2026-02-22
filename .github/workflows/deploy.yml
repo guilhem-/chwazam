@@ -23,7 +23,7 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm ci
-      - run: npx tsc && npx vite build
+      - run: npx tsc && npx vite build --base /chwazam/
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist

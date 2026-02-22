@@ -1,0 +1,64 @@
+name: Release APK
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build web assets
+        run: npx tsc && npx vite build --base ./
+
+      - name: Sync Capacitor
+        run: npx cap sync
+
+      - name: Build release APK and AAB
+        working-directory: android
+        run: ./gradlew assembleRelease bundleRelease
+
+      - name: Decode keystore
+        run: echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > keystore.jks
+
+      - name: Sign APK
+        run: |
+          zipalign=$(find $ANDROID_HOME/build-tools -name zipalign | sort -V | tail -1)
+          apksigner=$(find $ANDROID_HOME/build-tools -name apksigner | sort -V | tail -1)
+          $zipalign -v 4 android/app/build/outputs/apk/release/app-release-unsigned.apk app-release-aligned.apk
+          $apksigner sign \
+            --ks keystore.jks \
+            --ks-key-alias ${{ secrets.KEY_ALIAS }} \
+            --ks-pass pass:${{ secrets.KEYSTORE_PASSWORD }} \
+            --key-pass pass:${{ secrets.KEY_PASSWORD }} \
+            --out chwazam-${{ github.ref_name }}.apk \
+            app-release-aligned.apk
+
+      - name: Rename AAB
+        run: cp android/app/build/outputs/bundle/release/app-release.aab chwazam-${{ github.ref_name }}.aab
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            chwazam-${{ github.ref_name }}.apk
+            chwazam-${{ github.ref_name }}.aab
+          generate_release_notes: true
