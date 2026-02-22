@@ -29,8 +29,15 @@ jobs:
       - name: Build web assets
         run: npx tsc && npx vite build --base ./
 
-      - name: Sync Capacitor
-        run: npx cap sync
+      - name: Add Android platform and sync
+        run: |
+          npx cap add android
+          npx cap sync
+
+      - name: Copy custom Android sources
+        run: |
+          # Copy MainActivity with immersive mode, icons, splash, styles
+          cp -r android-overrides/* android/ 2>/dev/null || true
 
       - name: Build release APK and AAB
         working-directory: android
