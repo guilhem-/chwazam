@@ -5,10 +5,13 @@ import { VictoryArrows } from './victory';
 import { TOWER_COLORS } from './colors';
 import { dist, angleBetween, randomRange } from './utils';
 import { NukeAnimation } from './nuke';
+import { BlackHoleAnimation } from './blackhole';
+import { LaserAnimation } from './laser';
+import { GrowingAnimation } from './growing';
 import { t } from './i18n';
 import { createPRNG, type PRNG } from './prng';
 
-export type GameState = 'SPLASH' | 'WAITING' | 'PLACING' | 'COUNTDOWN' | 'BATTLE' | 'NUKE' | 'WINNER' | 'BLACK';
+export type GameState = 'SPLASH' | 'WAITING' | 'PLACING' | 'COUNTDOWN' | 'BATTLE' | 'NUKE' | 'BLACK_HOLE' | 'LASER' | 'GROWING' | 'WINNER' | 'BLACK';
 
 interface SplashArrow {
   x: number;
@@ -54,6 +57,9 @@ export class Game {
   chosenWinnerId = -1;
   winningSeed = -1;
   nukeAnimation: NukeAnimation | null = null;
+  blackHoleAnimation: BlackHoleAnimation | null = null;
+  laserAnimation: LaserAnimation | null = null;
+  growingAnimation: GrowingAnimation | null = null;
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -151,8 +157,8 @@ export class Game {
   }
 
   handleTouchStart(e: TouchEvent) {
-    // Ignore touches during nuke animation
-    if (this.state === 'NUKE') return;
+    // Ignore touches during animation states
+    if (this.state === 'NUKE' || this.state === 'BLACK_HOLE' || this.state === 'LASER' || this.state === 'GROWING' || this.state === 'BATTLE') return;
 
     // Skip splash on touch
     if (this.state === 'SPLASH') {
@@ -164,28 +170,6 @@ export class Game {
     if (this.state === 'WINNER' || this.state === 'BLACK') {
       this.reset();
       // Fall through to place fingers below
-    }
-
-    // During battle: re-associate fingers with nearby dormant towers
-    if (this.state === 'BATTLE') {
-      for (let i = 0; i < e.changedTouches.length; i++) {
-        const touch = e.changedTouches[i];
-        let nearest: Tower | null = null;
-        let nearestDist = 100;
-        for (const tower of this.towers) {
-          if (!tower.alive || tower.hasFinger) continue;
-          const d = dist(touch.clientX, touch.clientY, tower.x, tower.y);
-          if (d < nearestDist) {
-            nearest = tower;
-            nearestDist = d;
-          }
-        }
-        if (nearest) {
-          nearest.fingerRestored();
-          this.activeTouches.set(touch.identifier, nearest.id);
-        }
-      }
-      return;
     }
 
     // Place all new fingers at once
@@ -200,7 +184,7 @@ export class Game {
 
   handleTouchMove(e: TouchEvent) {
     // Only track finger positions before battle
-    if (this.state === 'BATTLE' || this.state === 'WINNER' || this.state === 'NUKE') return;
+    if (this.state === 'BATTLE' || this.state === 'WINNER' || this.state === 'NUKE' || this.state === 'BLACK_HOLE' || this.state === 'LASER' || this.state === 'GROWING') return;
 
     for (let i = 0; i < e.changedTouches.length; i++) {
       const touch = e.changedTouches[i];
@@ -216,17 +200,14 @@ export class Game {
   }
 
   handleTouchEnd(e: TouchEvent) {
-    // Ignore touches during nuke animation
-    if (this.state === 'NUKE') return;
-
     for (let i = 0; i < e.changedTouches.length; i++) {
       const touch = e.changedTouches[i];
       const towerId = this.activeTouches.get(touch.identifier);
       this.activeTouches.delete(touch.identifier);
 
-      // During battle: return to countdown
-      if (this.state === 'BATTLE' && towerId !== undefined) {
-        this.returnToCountdown();
+      // During any animation state: skip to winner immediately
+      if ((this.state === 'BATTLE' || this.state === 'NUKE' || this.state === 'BLACK_HOLE' || this.state === 'LASER' || this.state === 'GROWING') && towerId !== undefined) {
+        this.skipToWinner();
         return;
       }
 
@@ -248,37 +229,45 @@ export class Game {
     }
   }
 
-  returnToCountdown() {
-    this.state = 'COUNTDOWN';
-    this.countdownDuration = 2;
-    this.countdownStart = this.elapsed;
+  transitionToWinner(winner: Tower) {
+    this.state = 'WINNER';
+    this.winnerTime = this.elapsed;
+    winner.invincible = true;
+    winner.withdrawing = false;
+    winner.withdrawScale = 1;
+    winner.hasFinger = true;
+    winner.alive = true;
+    this.victoryArrows = new VictoryArrows(winner.x, winner.y, winner.color, this.width, this.height);
+    this.particles.celebrationBurst(winner.x, winner.y, 80);
+  }
+
+  skipToWinner() {
+    const winner = this.towers.find(t => t.id === this.chosenWinnerId);
+    if (!winner) return;
+
+    // Kill all non-winner towers with explosions
+    for (const tower of this.towers) {
+      if (tower.id !== this.chosenWinnerId && tower.alive) {
+        tower.alive = false;
+        tower.hp = 0;
+        this.particles.burst(tower.x, tower.y, tower.color, 70);
+      }
+    }
 
     // Clear battle state
     this.bullets = [];
-    this.guidedMissileActive = false;
-    this.guidedMissileTimer = 0;
-    this.simPrng = null;
-    this.chosenWinnerId = -1;
-    this.winningSeed = -1;
+    this.nukeAnimation = null;
+    this.blackHoleAnimation = null;
+    this.laserAnimation = null;
+    this.growingAnimation = null;
+    this.particles.attractorStrength = 0;
 
-    // Reset all towers for countdown
-    for (const tower of this.towers) {
-      tower.resetForCountdown();
-    }
+    this.transitionToWinner(winner);
+  }
 
-    // Remove towers whose fingers are no longer touching
-    const activeTowerIds = new Set(this.activeTouches.values());
-    this.towers = this.towers.filter(t => activeTowerIds.has(t.id));
-
-    // If < 2 towers remain, go to PLACING or BLACK
-    if (this.towers.length < 2) {
-      if (this.activeTouches.size === 0) {
-        this.state = 'BLACK';
-        this.blackScreenTime = this.elapsed;
-      } else {
-        this.state = 'PLACING';
-      }
-    }
+  selectVictoryEffect(): 'BATTLE' | 'NUKE' | 'BLACK_HOLE' | 'LASER' | 'GROWING' {
+    const effects: ('BATTLE' | 'NUKE' | 'BLACK_HOLE' | 'LASER' | 'GROWING')[] = ['BATTLE', 'NUKE', 'BLACK_HOLE', 'LASER', 'GROWING'];
+    return effects[Math.floor(Math.random() * effects.length)];
   }
 
   handleMouseDown(e: MouseEvent) {
@@ -288,7 +277,7 @@ export class Game {
     if (this.state === 'WINNER' || this.state === 'BLACK') {
       this.reset();
     }
-    if (this.state === 'BATTLE') return;
+    if (this.state === 'BATTLE' || this.state === 'NUKE' || this.state === 'BLACK_HOLE' || this.state === 'LASER') return;
 
     const fakeId = 10000 + this.mouseClickCounter++;
     this.addTower(fakeId, e.clientX, e.clientY);
@@ -317,6 +306,9 @@ export class Game {
     this.particles = new ParticleSystem();
     this.victoryArrows = null;
     this.nukeAnimation = null;
+    this.blackHoleAnimation = null;
+    this.laserAnimation = null;
+    this.growingAnimation = null;
     this.nextTowerId = 0;
     this.activeTouches.clear();
     this.guidedMissileActive = false;
@@ -366,8 +358,8 @@ export class Game {
       // real game, where startBattle() is called mid-update and battle logic
       // runs immediately at the current this.elapsed before the next += dt.
 
-      // Cannon escalation every 3s
-      if (simElapsed - lastCannonEscalation >= 3) {
+      // Cannon escalation every 2.4s
+      if (simElapsed - lastCannonEscalation >= 2.4) {
         lastCannonEscalation = simElapsed;
         for (const tower of towers) {
           if (tower.alive && tower.withdrawScale > 0.5) {
@@ -530,23 +522,39 @@ export class Game {
     const chosenWinnerId = this.towers[winnerIdx].id;
     this.chosenWinnerId = chosenWinnerId;
 
-    // Find a seed that produces this winner
-    this.winningSeed = this.findWinningScenario(snapshots, chosenWinnerId, this.width, this.height, this.elapsed);
+    const effect = this.selectVictoryEffect();
+    const winner = this.towers.find(t => t.id === chosenWinnerId)!;
 
-    if (this.winningSeed >= 0) {
-      // Replay with the winning seed
-      this.state = 'BATTLE';
-      this.simPrng = createPRNG(this.winningSeed);
+    if (effect === 'BATTLE') {
+      // Find a seed that produces this winner
+      this.winningSeed = this.findWinningScenario(snapshots, chosenWinnerId, this.width, this.height, this.elapsed);
 
-      for (const tower of this.towers) {
-        tower.scale = 1;
-        tower.startBattle(this.elapsed, this.simPrng);
+      if (this.winningSeed >= 0) {
+        // Replay with the winning seed
+        this.state = 'BATTLE';
+        this.simPrng = createPRNG(this.winningSeed);
+
+        for (const tower of this.towers) {
+          tower.scale = 1;
+          tower.startBattle(this.elapsed, this.simPrng);
+        }
+      } else {
+        // No winning seed found — fall back to nuke
+        this.state = 'NUKE';
+        this.nukeAnimation = new NukeAnimation(winner, this.towers, this.width, this.height, this.particles);
       }
-    } else {
-      // No winning seed found — launch nuke
+    } else if (effect === 'NUKE') {
       this.state = 'NUKE';
-      const winner = this.towers.find(t => t.id === chosenWinnerId)!;
       this.nukeAnimation = new NukeAnimation(winner, this.towers, this.width, this.height, this.particles);
+    } else if (effect === 'BLACK_HOLE') {
+      this.state = 'BLACK_HOLE';
+      this.blackHoleAnimation = new BlackHoleAnimation(winner, this.towers, this.width, this.height, this.particles);
+    } else if (effect === 'LASER') {
+      this.state = 'LASER';
+      this.laserAnimation = new LaserAnimation(winner, this.towers, this.width, this.height, this.particles);
+    } else {
+      this.state = 'GROWING';
+      this.growingAnimation = new GrowingAnimation(winner, this.towers, this.width, this.height, this.particles);
     }
   }
 
@@ -588,7 +596,7 @@ export class Game {
     if (this.state === 'BATTLE') {
       const battleTime = this.elapsed - this.battleStartTime;
 
-      if (this.elapsed - this.lastCannonEscalation >= 3) {
+      if (this.elapsed - this.lastCannonEscalation >= 2.4) {
         this.lastCannonEscalation = this.elapsed;
         for (const tower of this.towers) {
           if (tower.alive && tower.withdrawScale > 0.5) {
@@ -700,15 +708,31 @@ export class Game {
     if (this.state === 'NUKE' && this.nukeAnimation) {
       this.nukeAnimation.update(dt);
       if (this.nukeAnimation.finished) {
-        this.state = 'WINNER';
-        this.winnerTime = this.elapsed;
-        const winner = this.nukeAnimation.winner;
-        winner.invincible = true;
-        winner.withdrawing = false;
-        winner.withdrawScale = 1;
-        winner.hasFinger = true;
-        this.victoryArrows = new VictoryArrows(winner.x, winner.y, winner.color, this.width, this.height);
-        this.particles.celebrationBurst(winner.x, winner.y, 80);
+        this.transitionToWinner(this.nukeAnimation.winner);
+      }
+    }
+
+    // BLACK_HOLE state update
+    if (this.state === 'BLACK_HOLE' && this.blackHoleAnimation) {
+      this.blackHoleAnimation.update(dt);
+      if (this.blackHoleAnimation.finished) {
+        this.transitionToWinner(this.blackHoleAnimation.winner);
+      }
+    }
+
+    // LASER state update
+    if (this.state === 'LASER' && this.laserAnimation) {
+      this.laserAnimation.update(dt);
+      if (this.laserAnimation.finished) {
+        this.transitionToWinner(this.laserAnimation.winner);
+      }
+    }
+
+    // GROWING state update
+    if (this.state === 'GROWING' && this.growingAnimation) {
+      this.growingAnimation.update(dt);
+      if (this.growingAnimation.finished) {
+        this.transitionToWinner(this.growingAnimation.winner);
       }
     }
 
@@ -716,23 +740,14 @@ export class Game {
     if (this.state === 'BATTLE') {
       const aliveTowers = this.towers.filter(t => t.alive);
       if (aliveTowers.length <= 1) {
-        this.state = 'WINNER';
-        this.winnerTime = this.elapsed;
         let winner: Tower;
         if (aliveTowers.length === 1) {
           winner = aliveTowers[0];
         } else {
           winner = this.towers.reduce((a, b) => a.lastDeathOrder > b.lastDeathOrder ? a : b);
-          winner.alive = true;
           winner.hp = 1;
         }
-        // Winner is invincible — can't disappear
-        winner.invincible = true;
-        winner.withdrawing = false;
-        winner.withdrawScale = 1;
-        winner.hasFinger = true;
-        this.victoryArrows = new VictoryArrows(winner.x, winner.y, winner.color, this.width, this.height);
-        this.particles.celebrationBurst(winner.x, winner.y, 80);
+        this.transitionToWinner(winner);
       }
     }
   }
@@ -834,7 +849,7 @@ export class Game {
     }
 
     // Draw "W" marker on the pre-selected winner (debug/test only)
-    if (import.meta.env.DEV && (this.state === 'BATTLE' || this.state === 'NUKE' || this.state === 'WINNER') && this.chosenWinnerId >= 0) {
+    if (import.meta.env.DEV && (this.state === 'BATTLE' || this.state === 'NUKE' || this.state === 'BLACK_HOLE' || this.state === 'LASER' || this.state === 'GROWING' || this.state === 'WINNER') && this.chosenWinnerId >= 0) {
       const chosen = this.towers.find(t => t.id === this.chosenWinnerId);
       if (chosen) {
         ctx.save();
@@ -861,6 +876,21 @@ export class Game {
     // Nuke animation overlay
     if (this.state === 'NUKE' && this.nukeAnimation) {
       this.nukeAnimation.draw(ctx);
+    }
+
+    // Black hole animation overlay
+    if (this.state === 'BLACK_HOLE' && this.blackHoleAnimation) {
+      this.blackHoleAnimation.draw(ctx);
+    }
+
+    // Laser animation overlay
+    if (this.state === 'LASER' && this.laserAnimation) {
+      this.laserAnimation.draw(ctx);
+    }
+
+    // Growing animation overlay
+    if (this.state === 'GROWING' && this.growingAnimation) {
+      this.growingAnimation.draw(ctx);
     }
 
     // Countdown ring

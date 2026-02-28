@@ -85,20 +85,33 @@ async function waitForState(page: any, targetState: string, timeoutMs = 45000) {
   throw new Error(`Timed out waiting for state: ${targetState}`);
 }
 
+const ANIMATION_STATES = ['BATTLE', 'NUKE', 'BLACK_HOLE', 'LASER', 'GROWING'];
+
+async function waitForAnimationState(page: any, timeoutMs = 15000) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const state = await page.evaluate(() => (window as any).__chwazam?.state);
+    if (ANIMATION_STATES.includes(state)) return state;
+    await page.waitForTimeout(100);
+  }
+  throw new Error('Timed out waiting for animation state');
+}
+
 test('Nuke trigger: findWinningScenario returns -1 → NUKE state → all phases → WINNER', async ({ page }) => {
   test.setTimeout(60_000);
   await page.goto('/');
   await page.waitForTimeout(500);
 
-  // Monkey-patch findWinningScenario to always return -1
+  // Monkey-patch: force BATTLE effect, then force findWinningScenario to return -1 (triggers nuke fallback)
   await page.evaluate(() => {
     const game = (window as any).__chwazam;
+    (game as any).selectVictoryEffect = () => 'BATTLE';
     (game as any).findWinningScenario = () => -1;
   });
 
   await placeFingers(page, 2);
 
-  // Wait for NUKE state (countdown 3s → startBattle → NUKE)
+  // Wait for NUKE state (countdown → startBattle → BATTLE effect → no seed → NUKE)
   await waitForState(page, 'NUKE', 15000);
 
   // Verify nukeAnimation exists and starts in LAUNCH
@@ -142,23 +155,23 @@ test('Nuke trigger: findWinningScenario returns -1 → NUKE state → all phases
   expect(result.actualWinnerId).toBe(result.chosenWinnerId);
 });
 
-test('Finger removal during battle: resets to COUNTDOWN, 2 towers remain with full HP', async ({ page }) => {
+test('Finger removal during animation: skips to WINNER immediately', async ({ page }) => {
   test.setTimeout(60_000);
   await page.goto('/');
   await page.waitForTimeout(500);
 
   const positions = await placeFingers(page, 3);
 
-  // Wait for BATTLE
-  await waitForState(page, 'BATTLE', 15000);
+  // Wait for any animation state
+  await waitForAnimationState(page, 15000);
 
-  // Let battle run briefly
+  // Let animation run briefly
   await page.waitForTimeout(500);
 
   // Remove finger 2 (the last one)
   await removeFinger(page, 2, 3, positions);
 
-  // Should be in COUNTDOWN now
+  // Should skip to WINNER immediately
   await page.waitForTimeout(100);
 
   const afterRemoval = await page.evaluate(() => {
@@ -166,36 +179,16 @@ test('Finger removal during battle: resets to COUNTDOWN, 2 towers remain with fu
     return {
       state: game.state,
       towerCount: game.towers.length,
-      towers: game.towers.map((t: any) => ({
-        hp: t.hp,
-        maxHp: t.maxHp,
-        alive: t.alive,
-        cannonCount: t.cannons.length,
-      })),
-    };
-  });
-
-  expect(afterRemoval.state).toBe('COUNTDOWN');
-  expect(afterRemoval.towerCount).toBe(2);
-  for (const t of afterRemoval.towers) {
-    expect(t.hp).toBe(t.maxHp);
-    expect(t.alive).toBe(true);
-    expect(t.cannonCount).toBe(0);
-  }
-
-  // Wait for re-battle after 2s countdown, then WINNER
-  await waitForState(page, 'WINNER', 45000);
-
-  const finalResult = await page.evaluate(() => {
-    const game = (window as any).__chwazam;
-    return {
-      state: game.state,
-      totalTowers: game.towers.length,
       aliveTowers: game.towers.filter((t: any) => t.alive).length,
+      chosenWinnerId: game.chosenWinnerId,
+      actualWinnerId: game.towers.filter((t: any) => t.alive).map((t: any) => t.id),
     };
   });
 
-  expect(finalResult.state).toBe('WINNER');
-  expect(finalResult.totalTowers).toBe(2);
-  expect(finalResult.aliveTowers).toBe(1);
+  expect(afterRemoval.state).toBe('WINNER');
+  // All towers still in array (not removed)
+  expect(afterRemoval.towerCount).toBe(3);
+  // Only chosen winner alive
+  expect(afterRemoval.aliveTowers).toBe(1);
+  expect(afterRemoval.actualWinnerId[0]).toBe(afterRemoval.chosenWinnerId);
 });

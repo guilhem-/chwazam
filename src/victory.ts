@@ -36,7 +36,7 @@ export class VictoryArrows {
           y: gy + (Math.random() - 0.5) * 15,
           wobbleOffset: Math.random() * Math.PI * 2,
           wobbleSpeed: 1.5 + Math.random() * 1.5,
-          size: 10 + Math.random() * 4,
+          size: 11 + Math.random() * 4.4,
         });
       }
     }
@@ -63,8 +63,8 @@ export class VictoryArrows {
       const dx = arrow.x - this.centerX;
       const dy = arrow.y - this.centerY;
       const dist = Math.sqrt(dx * dx + dy * dy);
-      const distAlpha = Math.min(1, dist / 200) * 0.6;
-      const alpha = (0.3 + Math.sin(this.time * 3 + arrow.wobbleOffset) * 0.2) * distAlpha;
+      const distAlpha = Math.min(1, dist / 200) * 0.66;
+      const alpha = (0.33 + Math.sin(this.time * 3 + arrow.wobbleOffset) * 0.22) * distAlpha;
       const s = arrow.size;
 
       ctx.save();

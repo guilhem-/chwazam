@@ -81,6 +81,18 @@ async function removeLastFinger(page: any, fingerCount: number, positions: { x: 
   }, { count: fingerCount, pos: positions });
 }
 
+const ANIMATION_STATES = ['BATTLE', 'NUKE', 'BLACK_HOLE', 'LASER', 'GROWING'];
+
+async function waitForAnimationState(page: any, timeoutMs = 15000) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const state = await page.evaluate(() => (window as any).__chwazam?.state);
+    if (ANIMATION_STATES.includes(state)) return state;
+    await page.waitForTimeout(200);
+  }
+  throw new Error('Timed out waiting for animation state');
+}
+
 async function waitForState(page: any, targetState: string, timeoutMs = 45000) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
@@ -99,21 +111,19 @@ for (const fingerCount of [2, 3, 4, 5]) {
 
       const positions = await placeFingers(page, fingerCount);
 
-      // Wait for BATTLE
-      await waitForState(page, 'BATTLE', 10000);
+      // Wait for any animation state
+      await waitForAnimationState(page, 10000);
 
-      // Only remove a finger when 3+ players (removing with 2 leaves 1 → PLACING, no winner)
+      // Only remove a finger when 3+ players
       const willRemove = fingerCount >= 3;
       if (willRemove) {
-        const removeDelay = 2000 + Math.random() * 2000;
+        const removeDelay = 500 + Math.random() * 500;
         await page.waitForTimeout(removeDelay);
         await removeLastFinger(page, fingerCount, positions);
       }
 
-      // Wait for WINNER (no draw)
+      // Wait for WINNER
       await waitForState(page, 'WINNER', 45000);
-
-      const expectedTowers = willRemove ? fingerCount - 1 : fingerCount;
 
       const result = await page.evaluate(() => {
         const game = (window as any).__chwazam;
@@ -125,7 +135,8 @@ for (const fingerCount of [2, 3, 4, 5]) {
       });
 
       expect(result.state).toBe('WINNER');
-      expect(result.totalTowers).toBe(expectedTowers);
+      // All towers remain in array (finger removal skips to winner, doesn't remove towers)
+      expect(result.totalTowers).toBe(fingerCount);
       expect(result.aliveTowers).toBe(1);
     });
   }

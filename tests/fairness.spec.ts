@@ -39,6 +39,18 @@ async function placeFingers(page: any, count: number): Promise<{ x: number; y: n
   }, count);
 }
 
+const ANIMATION_STATES = ['BATTLE', 'NUKE', 'BLACK_HOLE', 'LASER', 'GROWING'];
+
+async function waitForAnimationState(page: any, timeoutMs = 15000) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const state = await page.evaluate(() => (window as any).__chwazam?.state);
+    if (ANIMATION_STATES.includes(state)) return state;
+    await page.waitForTimeout(200);
+  }
+  throw new Error('Timed out waiting for animation state');
+}
+
 async function waitForState(page: any, targetState: string, timeoutMs = 60000) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
@@ -77,8 +89,8 @@ test('20 real browser battles: W-marked tower always wins', async ({ page }) => 
 
     await placeFingers(page, fingerCount);
 
-    // Wait for countdown → battle
-    await waitForState(page, 'BATTLE', 15000);
+    // Wait for any animation state
+    await waitForAnimationState(page, 15000);
 
     // Wait for winner (real battle with rendering)
     await waitForState(page, 'WINNER', 60000);

@@ -17,6 +17,11 @@ interface Particle {
 export class ParticleSystem {
   particles: Particle[] = [];
 
+  // Optional gravity attractor (used by black hole)
+  attractorX = 0;
+  attractorY = 0;
+  attractorStrength = 0; // 0 = normal gravity, >0 = attract toward point
+
   burst(x: number, y: number, color: string, count = 60) {
     const { r, g, b } = hexToRgb(color);
     for (let i = 0; i < count; i++) {
@@ -66,10 +71,25 @@ export class ParticleSystem {
   update(dt: number) {
     for (let i = this.particles.length - 1; i >= 0; i--) {
       const p = this.particles[i];
+
+      if (this.attractorStrength > 0) {
+        // Attract toward point — dampen outward velocity so particles spiral inward
+        const dx = this.attractorX - p.x;
+        const dy = this.attractorY - p.y;
+        const d = Math.max(10, Math.sqrt(dx * dx + dy * dy));
+        const force = this.attractorStrength / (d * d);
+        p.vx += (dx / d) * force * dt;
+        p.vy += (dy / d) * force * dt;
+        // Strong drag to kill outward burst velocity
+        p.vx *= 0.93;
+        p.vy *= 0.93;
+      } else {
+        p.vy += 200 * dt; // normal gravity
+      }
+
       p.x += p.vx * dt;
       p.y += p.vy * dt;
-      p.vy += 200 * dt; // gravity
-      p.vx *= 0.98;
+      if (this.attractorStrength <= 0) p.vx *= 0.98;
       p.life -= dt;
       if (p.life <= 0) {
         this.particles.splice(i, 1);

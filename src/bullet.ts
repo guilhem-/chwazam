@@ -9,7 +9,7 @@ export class Bullet {
   color: string;
   sourceId: number;
   radius = 5;
-  speed = 300;
+  speed = 360;
   alive = true;
   trail: { x: number; y: number }[] = [];
 
@@ -29,7 +29,7 @@ export class Bullet {
     this.guided = guided;
     if (guided) {
       this.radius = 7;
-      this.speed = 220; // slower but homing
+      this.speed = 264; // slower but homing
     }
   }
 

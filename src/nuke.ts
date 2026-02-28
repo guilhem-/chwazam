@@ -348,11 +348,25 @@ export class NukeAnimation {
     const iy = this.impactY;
     const r = this.mushroomRadius;
     const stemH = this.mushroomStemH;
-    const fade = this.phase === 'AFTERMATH' ? Math.max(0.2, 1 - this.phaseTime / AFTERMATH_DUR) : 1;
+    const fade = this.phase === 'AFTERMATH' ? Math.max(0, 1 - this.phaseTime / AFTERMATH_DUR) : 1;
 
-    // Stem
-    ctx.fillStyle = `rgba(139,69,19,${0.4 * fade})`;
-    ctx.fillRect(ix - r * 0.15, iy - stemH, r * 0.3, stemH);
+    // Stem drawn as a vertical ellipse with radial gradient (no hard edges)
+    const stemW = r * 0.3;
+    const stemCenterY = iy - stemH / 2;
+    const stemRx = stemW / 2;
+    const stemRy = stemH / 2;
+    const stemGrad = ctx.createRadialGradient(ix, stemCenterY, 0, ix, stemCenterY, Math.max(stemRx, stemRy));
+    stemGrad.addColorStop(0, `rgba(139,69,19,${0.5 * fade})`);
+    stemGrad.addColorStop(0.7, `rgba(139,69,19,${0.2 * fade})`);
+    stemGrad.addColorStop(1, `rgba(139,69,19,0)`);
+    ctx.fillStyle = stemGrad;
+    ctx.save();
+    ctx.translate(ix, stemCenterY);
+    ctx.scale(stemRx / Math.max(stemRx, stemRy), stemRy / Math.max(stemRx, stemRy));
+    ctx.beginPath();
+    ctx.arc(0, 0, Math.max(stemRx, stemRy), 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
 
     // Cloud layers (bottom to top, largest to smallest)
     const layers = [

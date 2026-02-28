@@ -1,12 +1,15 @@
+// Ordered by greedy max-min RGB distance so consecutive fingers are visually distinct
 export const TOWER_COLORS = [
-  '#FF6B6B', // red
-  '#4ECDC4', // teal
-  '#45B7D1', // blue
-  '#96CEB4', // green
-  '#FFEAA7', // yellow
-  '#DDA0DD', // plum
-  '#FF8C42', // orange
-  '#98D8C8', // mint
+  '#FF3333', // red
+  '#33BBFF', // sky blue
+  '#88EE33', // lime
+  '#AA33FF', // purple
+  '#DDDDDD', // silver
+  '#FFE033', // yellow
+  '#FF33AA', // pink
+  '#5555FF', // indigo
+  '#33CC99', // emerald
+  '#FF8800', // orange
 ];
 
 export function hexToRgb(hex: string): { r: number; g: number; b: number } {
