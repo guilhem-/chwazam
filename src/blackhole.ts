@@ -93,9 +93,12 @@ export class BlackHoleAnimation {
       const dx = this.winner.x - s.x;
       const dy = this.winner.y - s.y;
       const d = Math.max(10, Math.sqrt(dx * dx + dy * dy));
-      const force = 24000 / (d * d);
+      // 1/r force so distant stars still feel strong pull
+      const force = 20000 / d;
       s.vx += (dx / d) * force * dt;
       s.vy += (dy / d) * force * dt;
+      s.vx *= 0.96;
+      s.vy *= 0.96;
       s.x += s.vx * dt;
       s.y += s.vy * dt;
       s.life -= dt;
@@ -204,12 +207,15 @@ export class BlackHoleAnimation {
   private spawnStar() {
     const angle = randomRange(0, Math.PI * 2);
     const d = randomRange(150, Math.max(this.canvasW, this.canvasH) * 0.6);
+    // Tangential velocity for spiral effect
+    const tangent = angle + Math.PI / 2;
+    const speed = randomRange(40, 100);
     this.stars.push({
       x: this.winner.x + Math.cos(angle) * d,
       y: this.winner.y + Math.sin(angle) * d,
-      vx: randomRange(-30, 30),
-      vy: randomRange(-30, 30),
-      life: 2,
+      vx: Math.cos(tangent) * speed,
+      vy: Math.sin(tangent) * speed,
+      life: 3,
       size: randomRange(1, 3),
       blue: Math.random() > 0.5,
     });
