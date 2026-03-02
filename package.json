@@ -9,7 +9,11 @@
     "preview": "vite preview",
     "test": "npx playwright test --headed",
     "cap:sync": "npm run build && npx cap sync",
-    "cap:android": "npm run build && npx cap sync && cd android && ./gradlew assembleDebug"
+    "cap:android": "npm run build && npx cap sync && cd android && ./gradlew assembleDebug",
+    "gen:icon": "node scripts/gen-icon.cjs",
+    "gen:feature-graphic": "node scripts/gen-feature-graphic.cjs",
+    "gen:screenshots": "npm run build && node scripts/gen-screenshots.cjs",
+    "gen:store": "npm run gen:icon && npm run gen:feature-graphic && npm run gen:screenshots"
   },
   "dependencies": {
     "@capacitor/core": "^8.1.0"
