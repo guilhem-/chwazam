@@ -12,10 +12,20 @@ public class MainActivity extends BridgeActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-        WindowCompat.setDecorFitsSystemWindows(getWindow(), false);
+        hideSystemBars();
+    }
 
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (hasFocus) {
+            hideSystemBars();
+        }
+    }
+
+    private void hideSystemBars() {
+        WindowCompat.setDecorFitsSystemWindows(getWindow(), false);
         WindowInsetsControllerCompat controller =
             WindowCompat.getInsetsController(getWindow(), getWindow().getDecorView());
         controller.hide(WindowInsetsCompat.Type.systemBars());
