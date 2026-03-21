@@ -8,10 +8,17 @@ import { NukeAnimation } from './nuke';
 import { BlackHoleAnimation } from './blackhole';
 import { LaserAnimation } from './laser';
 import { GrowingAnimation } from './growing';
+import { PoolAnimation } from './pool';
+import { BlastAnimation } from './blast';
+import { SolarAnimation } from './solar';
+import { SandwormAnimation } from './sandworm';
+import { WaterAnimation } from './water';
+import { AntAnimation } from './ant';
+import { LightningAnimation } from './lightning';
 import { t } from './i18n';
 import { createPRNG, type PRNG } from './prng';
 
-export type GameState = 'SPLASH' | 'WAITING' | 'PLACING' | 'COUNTDOWN' | 'BATTLE' | 'NUKE' | 'BLACK_HOLE' | 'LASER' | 'GROWING' | 'WINNER' | 'BLACK';
+export type GameState = 'SPLASH' | 'WAITING' | 'PLACING' | 'COUNTDOWN' | 'BATTLE' | 'NUKE' | 'BLACK_HOLE' | 'LASER' | 'GROWING' | 'POOL' | 'BLAST' | 'SOLAR' | 'SANDWORM' | 'WATER' | 'ANT' | 'LIGHTNING' | 'WINNER' | 'BLACK';
 
 interface SplashArrow {
   x: number;
@@ -60,6 +67,13 @@ export class Game {
   blackHoleAnimation: BlackHoleAnimation | null = null;
   laserAnimation: LaserAnimation | null = null;
   growingAnimation: GrowingAnimation | null = null;
+  poolAnimation: PoolAnimation | null = null;
+  blastAnimation: BlastAnimation | null = null;
+  solarAnimation: SolarAnimation | null = null;
+  sandwormAnimation: SandwormAnimation | null = null;
+  waterAnimation: WaterAnimation | null = null;
+  antAnimation: AntAnimation | null = null;
+  lightningAnimation: LightningAnimation | null = null;
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -158,7 +172,7 @@ export class Game {
 
   handleTouchStart(e: TouchEvent) {
     // Ignore touches during animation states
-    if (this.state === 'NUKE' || this.state === 'BLACK_HOLE' || this.state === 'LASER' || this.state === 'GROWING' || this.state === 'BATTLE') return;
+    if (this.state === 'NUKE' || this.state === 'BLACK_HOLE' || this.state === 'LASER' || this.state === 'GROWING' || this.state === 'POOL' || this.state === 'BLAST' || this.state === 'SOLAR' || this.state === 'SANDWORM' || this.state === 'WATER' || this.state === 'ANT' || this.state === 'LIGHTNING' || this.state === 'BATTLE') return;
 
     // Skip splash on touch
     if (this.state === 'SPLASH') {
@@ -184,7 +198,7 @@ export class Game {
 
   handleTouchMove(e: TouchEvent) {
     // Only track finger positions before battle
-    if (this.state === 'BATTLE' || this.state === 'WINNER' || this.state === 'NUKE' || this.state === 'BLACK_HOLE' || this.state === 'LASER' || this.state === 'GROWING') return;
+    if (this.state === 'BATTLE' || this.state === 'WINNER' || this.state === 'NUKE' || this.state === 'BLACK_HOLE' || this.state === 'LASER' || this.state === 'GROWING' || this.state === 'POOL' || this.state === 'BLAST' || this.state === 'SOLAR' || this.state === 'SANDWORM' || this.state === 'WATER' || this.state === 'ANT' || this.state === 'LIGHTNING') return;
 
     for (let i = 0; i < e.changedTouches.length; i++) {
       const touch = e.changedTouches[i];
@@ -206,7 +220,12 @@ export class Game {
       this.activeTouches.delete(touch.identifier);
 
       // During any animation state: skip to winner immediately
-      if ((this.state === 'BATTLE' || this.state === 'NUKE' || this.state === 'BLACK_HOLE' || this.state === 'LASER' || this.state === 'GROWING') && towerId !== undefined) {
+      if ((this.state === 'BATTLE' || this.state === 'NUKE' || this.state === 'BLACK_HOLE' || this.state === 'LASER' || this.state === 'GROWING' || this.state === 'POOL' || this.state === 'BLAST' || this.state === 'SOLAR' || this.state === 'SANDWORM' || this.state === 'WATER' || this.state === 'ANT' || this.state === 'LIGHTNING') && towerId !== undefined) {
+        // Sandworm: swallow all instantly, let animation finish naturally
+        if (this.state === 'SANDWORM' && this.sandwormAnimation) {
+          this.sandwormAnimation.swallowAll();
+          return;
+        }
         this.skipToWinner();
         return;
       }
@@ -260,14 +279,43 @@ export class Game {
     this.blackHoleAnimation = null;
     this.laserAnimation = null;
     this.growingAnimation = null;
+    this.poolAnimation = null;
+    this.blastAnimation = null;
+    this.solarAnimation = null;
+    this.sandwormAnimation = null;
+    this.waterAnimation = null;
+    this.antAnimation = null;
+    this.lightningAnimation = null;
     this.particles.attractorStrength = 0;
 
     this.transitionToWinner(winner);
   }
 
-  selectVictoryEffect(): 'BATTLE' | 'NUKE' | 'BLACK_HOLE' | 'LASER' | 'GROWING' {
-    const effects: ('BATTLE' | 'NUKE' | 'BLACK_HOLE' | 'LASER' | 'GROWING')[] = ['BATTLE', 'NUKE', 'BLACK_HOLE', 'LASER', 'GROWING'];
-    return effects[Math.floor(Math.random() * effects.length)];
+  canActivateEffect(effect: string): boolean {
+    switch (effect) {
+      case 'POOL':
+        // All towers must be at least 20px from screen borders
+        if (!this.towers.every(t =>
+          t.x >= 20 && t.x <= this.width - 20 &&
+          t.y >= 20 && t.y <= this.height - 20
+        )) return false;
+        // No two towers may overlap (distance >= sum of radii)
+        for (let i = 0; i < this.towers.length; i++) {
+          for (let j = i + 1; j < this.towers.length; j++) {
+            const d = dist(this.towers[i].x, this.towers[i].y, this.towers[j].x, this.towers[j].y);
+            if (d < this.towers[i].radius + this.towers[j].radius) return false;
+          }
+        }
+        return true;
+      default:
+        return true;
+    }
+  }
+
+  selectVictoryEffect(): 'BATTLE' | 'NUKE' | 'BLACK_HOLE' | 'LASER' | 'GROWING' | 'POOL' | 'BLAST' | 'SOLAR' | 'SANDWORM' | 'WATER' | 'ANT' | 'LIGHTNING' {
+    const allEffects: ('BATTLE' | 'NUKE' | 'BLACK_HOLE' | 'LASER' | 'GROWING' | 'POOL' | 'BLAST' | 'SOLAR' | 'SANDWORM' | 'WATER' | 'ANT' | 'LIGHTNING')[] = ['BATTLE', 'NUKE', 'BLACK_HOLE', 'LASER', 'GROWING', 'POOL', 'BLAST', 'SOLAR', 'SANDWORM', 'WATER', 'ANT', 'LIGHTNING'];
+    const available = allEffects.filter(e => this.canActivateEffect(e));
+    return available[Math.floor(Math.random() * available.length)];
   }
 
   handleMouseDown(e: MouseEvent) {
@@ -277,7 +325,7 @@ export class Game {
     if (this.state === 'WINNER' || this.state === 'BLACK') {
       this.reset();
     }
-    if (this.state === 'BATTLE' || this.state === 'NUKE' || this.state === 'BLACK_HOLE' || this.state === 'LASER') return;
+    if (this.state === 'BATTLE' || this.state === 'NUKE' || this.state === 'BLACK_HOLE' || this.state === 'LASER' || this.state === 'GROWING' || this.state === 'POOL' || this.state === 'BLAST' || this.state === 'SOLAR' || this.state === 'SANDWORM' || this.state === 'WATER' || this.state === 'ANT' || this.state === 'LIGHTNING') return;
 
     const fakeId = 10000 + this.mouseClickCounter++;
     this.addTower(fakeId, e.clientX, e.clientY);
@@ -292,8 +340,9 @@ export class Game {
   addTower(touchId: number, x: number, y: number) {
     if (this.activeTouches.has(touchId)) return;
     const id = this.nextTowerId++;
-    const colorIdx = this.towers.length % TOWER_COLORS.length;
-    const tower = new Tower(id, x, y, TOWER_COLORS[colorIdx]);
+    const usedColors = new Set(this.towers.map(t => t.color));
+    const color = TOWER_COLORS.find(c => !usedColors.has(c)) ?? TOWER_COLORS[this.towers.length % TOWER_COLORS.length];
+    const tower = new Tower(id, x, y, color);
     tower.spawnTime = this.elapsed;
     this.towers.push(tower);
     this.activeTouches.set(touchId, id);
@@ -309,6 +358,13 @@ export class Game {
     this.blackHoleAnimation = null;
     this.laserAnimation = null;
     this.growingAnimation = null;
+    this.poolAnimation = null;
+    this.blastAnimation = null;
+    this.solarAnimation = null;
+    this.sandwormAnimation = null;
+    this.waterAnimation = null;
+    this.antAnimation = null;
+    this.lightningAnimation = null;
     this.nextTowerId = 0;
     this.activeTouches.clear();
     this.guidedMissileActive = false;
@@ -552,6 +608,27 @@ export class Game {
     } else if (effect === 'LASER') {
       this.state = 'LASER';
       this.laserAnimation = new LaserAnimation(winner, this.towers, this.width, this.height, this.particles);
+    } else if (effect === 'POOL') {
+      this.state = 'POOL';
+      this.poolAnimation = new PoolAnimation(winner, this.towers, this.width, this.height, this.particles);
+    } else if (effect === 'BLAST') {
+      this.state = 'BLAST';
+      this.blastAnimation = new BlastAnimation(winner, this.towers, this.width, this.height, this.particles);
+    } else if (effect === 'SOLAR') {
+      this.state = 'SOLAR';
+      this.solarAnimation = new SolarAnimation(winner, this.towers, this.width, this.height, this.particles);
+    } else if (effect === 'SANDWORM') {
+      this.state = 'SANDWORM';
+      this.sandwormAnimation = new SandwormAnimation(winner, this.towers, this.width, this.height, this.particles);
+    } else if (effect === 'WATER') {
+      this.state = 'WATER';
+      this.waterAnimation = new WaterAnimation(winner, this.towers, this.width, this.height, this.particles);
+    } else if (effect === 'ANT') {
+      this.state = 'ANT';
+      this.antAnimation = new AntAnimation(winner, this.towers, this.width, this.height, this.particles);
+    } else if (effect === 'LIGHTNING') {
+      this.state = 'LIGHTNING';
+      this.lightningAnimation = new LightningAnimation(winner, this.towers, this.width, this.height, this.particles);
     } else {
       this.state = 'GROWING';
       this.growingAnimation = new GrowingAnimation(winner, this.towers, this.width, this.height, this.particles);
@@ -736,6 +813,62 @@ export class Game {
       }
     }
 
+    // POOL state update
+    if (this.state === 'POOL' && this.poolAnimation) {
+      this.poolAnimation.update(dt);
+      if (this.poolAnimation.finished) {
+        this.transitionToWinner(this.poolAnimation.winner);
+      }
+    }
+
+    // BLAST state update
+    if (this.state === 'BLAST' && this.blastAnimation) {
+      this.blastAnimation.update(dt);
+      if (this.blastAnimation.finished) {
+        this.transitionToWinner(this.blastAnimation.winner);
+      }
+    }
+
+    // SOLAR state update
+    if (this.state === 'SOLAR' && this.solarAnimation) {
+      this.solarAnimation.update(dt);
+      if (this.solarAnimation.finished) {
+        this.transitionToWinner(this.solarAnimation.winner);
+      }
+    }
+
+    // SANDWORM state update
+    if (this.state === 'SANDWORM' && this.sandwormAnimation) {
+      this.sandwormAnimation.update(dt);
+      if (this.sandwormAnimation.finished) {
+        this.transitionToWinner(this.sandwormAnimation.winner);
+      }
+    }
+
+    // WATER state update
+    if (this.state === 'WATER' && this.waterAnimation) {
+      this.waterAnimation.update(dt);
+      if (this.waterAnimation.finished) {
+        this.transitionToWinner(this.waterAnimation.winner);
+      }
+    }
+
+    // ANT state update
+    if (this.state === 'ANT' && this.antAnimation) {
+      this.antAnimation.update(dt);
+      if (this.antAnimation.finished) {
+        this.transitionToWinner(this.antAnimation.winner);
+      }
+    }
+
+    // LIGHTNING state update
+    if (this.state === 'LIGHTNING' && this.lightningAnimation) {
+      this.lightningAnimation.update(dt);
+      if (this.lightningAnimation.finished) {
+        this.transitionToWinner(this.lightningAnimation.winner);
+      }
+    }
+
     // Check for winner
     if (this.state === 'BATTLE') {
       const aliveTowers = this.towers.filter(t => t.alive);
@@ -842,6 +975,16 @@ export class Game {
       this.victoryArrows.draw(ctx);
     }
 
+    // Sandworm sand layer (below towers)
+    if (this.state === 'SANDWORM' && this.sandwormAnimation) {
+      this.sandwormAnimation.drawSand(ctx);
+    }
+
+    // Ant sand layer (below towers)
+    if (this.state === 'ANT' && this.antAnimation) {
+      this.antAnimation.drawSand(ctx);
+    }
+
     // Draw towers
     for (const tower of this.towers) {
       if (!tower.alive) continue;
@@ -849,7 +992,7 @@ export class Game {
     }
 
     // Draw "W" marker on the pre-selected winner (debug/test only)
-    if (import.meta.env.DEV && (this.state === 'BATTLE' || this.state === 'NUKE' || this.state === 'BLACK_HOLE' || this.state === 'LASER' || this.state === 'GROWING' || this.state === 'WINNER') && this.chosenWinnerId >= 0) {
+    if (import.meta.env.DEV && (this.state === 'BATTLE' || this.state === 'NUKE' || this.state === 'BLACK_HOLE' || this.state === 'LASER' || this.state === 'GROWING' || this.state === 'POOL' || this.state === 'BLAST' || this.state === 'SOLAR' || this.state === 'SANDWORM' || this.state === 'WATER' || this.state === 'ANT' || this.state === 'LIGHTNING' || this.state === 'WINNER') && this.chosenWinnerId >= 0) {
       const chosen = this.towers.find(t => t.id === this.chosenWinnerId);
       if (chosen) {
         ctx.save();
@@ -891,6 +1034,41 @@ export class Game {
     // Growing animation overlay
     if (this.state === 'GROWING' && this.growingAnimation) {
       this.growingAnimation.draw(ctx);
+    }
+
+    // Pool animation overlay (covers entire screen)
+    if (this.state === 'POOL' && this.poolAnimation) {
+      this.poolAnimation.draw(ctx);
+    }
+
+    // Blast animation overlay
+    if (this.state === 'BLAST' && this.blastAnimation) {
+      this.blastAnimation.draw(ctx);
+    }
+
+    // Solar animation overlay
+    if (this.state === 'SOLAR' && this.solarAnimation) {
+      this.solarAnimation.draw(ctx);
+    }
+
+    // Sandworm animation overlay
+    if (this.state === 'SANDWORM' && this.sandwormAnimation) {
+      this.sandwormAnimation.draw(ctx);
+    }
+
+    // Water animation overlay
+    if (this.state === 'WATER' && this.waterAnimation) {
+      this.waterAnimation.draw(ctx);
+    }
+
+    // Ant animation overlay
+    if (this.state === 'ANT' && this.antAnimation) {
+      this.antAnimation.draw(ctx);
+    }
+
+    // Lightning animation overlay
+    if (this.state === 'LIGHTNING' && this.lightningAnimation) {
+      this.lightningAnimation.draw(ctx);
     }
 
     // Countdown ring

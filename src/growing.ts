@@ -30,7 +30,8 @@ export class GrowingAnimation {
     this.canvasH = canvasH;
     this.particles = particles;
 
-    winner.invincible = true;
+    // Don't set winner.invincible yet — it draws a visible shield that reveals the winner.
+    // The winner is protected from elimination by the explicit check in updateGrowing.
 
     // All towers participate in growing — start at their current drawn radius
     this.growers = allTowers.map(t => ({
@@ -96,6 +97,7 @@ export class GrowingAnimation {
     if (remaining.length <= 1) {
       const winnerGrower = this.growers.find(g => g.tower.id === this.winner.id);
       this.winnerPeakRadius = winnerGrower ? winnerGrower.radius : this.winner.radius;
+      this.winner.invincible = true;
       this.phase = 'SHRINK_WINNER';
       this.phaseTime = 0;
     }
@@ -157,8 +159,8 @@ export class GrowingAnimation {
       ctx.arc(tower.x, tower.y, r, 0, Math.PI * 2);
       ctx.fill();
 
-      // Invincible shield on winner
-      if (tower.invincible) {
+      // Invincible shield on winner — only show after winner is revealed
+      if (tower.invincible && this.phase === 'SHRINK_WINNER') {
         ctx.strokeStyle = `rgba(255,255,255,0.6)`;
         ctx.lineWidth = 3;
         ctx.shadowColor = '#fff';
