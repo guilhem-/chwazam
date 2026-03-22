@@ -234,7 +234,7 @@ test('Blast: all enemy towers are pushed off screen', async ({ page }) => {
   expect(result.enemiesAlive).toBe(0);
 });
 
-test('Blast: winner tower stays invincible and in place', async ({ page }) => {
+test('Blast: winner tower stays in place', async ({ page }) => {
   test.setTimeout(30_000);
   await page.goto('/');
   await page.waitForTimeout(500);
@@ -247,10 +247,8 @@ test('Blast: winner tower stays invincible and in place', async ({ page }) => {
   const startPos = await page.evaluate(() => {
     const game = (window as any).__chwazam;
     const winner = game.towers.find((t: any) => t.id === game.chosenWinnerId);
-    return { x: winner.x, y: winner.y, invincible: winner.invincible };
+    return { x: winner.x, y: winner.y };
   });
-
-  expect(startPos.invincible).toBe(true);
 
   await waitForState(page, 'WINNER', 20000);
 

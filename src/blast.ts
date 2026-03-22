@@ -51,8 +51,6 @@ export class BlastAnimation {
     this.canvasH = canvasH;
     this.particles = particles;
 
-    winner.invincible = true;
-
     // Max distance from winner to any screen corner
     const cx = winner.x, cy = winner.y;
     this.maxRadius = Math.max(

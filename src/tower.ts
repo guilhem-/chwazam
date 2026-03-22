@@ -51,6 +51,7 @@ export class Tower {
   // Cannons
   cannons: Cannon[] = [];
   cannonVisible = false;
+  showHp = false;
 
   // Hit effect
   flashTimer = 0;
@@ -89,6 +90,7 @@ export class Tower {
 
   startBattle(elapsed: number, prng?: PRNG) {
     this.cannonVisible = true;
+    this.showHp = true;
     this.addCannon(elapsed, prng);
   }
 
@@ -98,6 +100,7 @@ export class Tower {
     this.invincible = false;
     this.cannons = [];
     this.cannonVisible = false;
+    this.showHp = false;
     this.flashTimer = 0;
     this.shakeTimer = 0;
     this.shakeX = 0;
@@ -236,7 +239,7 @@ export class Tower {
     }
 
     // HP indicator
-    if (!this.invincible) {
+    if (!this.invincible && this.showHp) {
       for (let i = 0; i < this.maxHp; i++) {
         const segAngle = (Math.PI * 2) / this.maxHp;
         const startA = -Math.PI / 2 + i * segAngle + 0.05;

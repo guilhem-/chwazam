@@ -102,6 +102,7 @@ export class PoolAnimation {
   physicsAccum = 0; // frame-rate independent accumulator
   currentRecording: ShotRecording | null = null;
   replayTick = 0;
+  playbackSpeed = 1.1; // 10% faster than real-time
 
   constructor(winner: Tower, allTowers: Tower[], canvasW: number, canvasH: number, particles: ParticleSystem) {
     this.winner = winner;
@@ -352,6 +353,9 @@ export class PoolAnimation {
       this.missStreak = 0;
       this.lastRemainingCount = remaining.length;
     }
+
+    // Last shot: 30% faster
+    if (remaining.length === 1) this.playbackSpeed = 1.3;
 
     // After 1 miss, scatter balls (should be very rare with exhaustive search)
     if (this.missStreak >= 1) {
@@ -818,7 +822,7 @@ export class PoolAnimation {
 
   private stepPhysics(dt: number) {
     if (!this.currentRecording) return;
-    this.physicsAccum += dt;
+    this.physicsAccum += dt * this.playbackSpeed;
     while (this.physicsAccum >= FIXED_DT) {
       this.physicsAccum -= FIXED_DT;
       this.advanceReplayTick();

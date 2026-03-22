@@ -48,8 +48,6 @@ export class SandwormAnimation {
     this.canvasH = canvasH;
     this.particles = particles;
 
-    winner.invincible = true;
-
     // Generate static sand texture once
     this.sandCanvas = document.createElement('canvas');
     this.sandCanvas.width = canvasW;

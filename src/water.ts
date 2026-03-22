@@ -68,8 +68,6 @@ export class WaterAnimation {
     this.canvasH = canvasH;
     this.particles = particles;
 
-    winner.invincible = true;
-
     // Max dry radius: distance from winner to farthest screen corner
     this.maxDryRadius = Math.max(
       dist(winner.x, winner.y, 0, 0),

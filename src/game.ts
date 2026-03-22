@@ -1071,17 +1071,30 @@ export class Game {
       this.lightningAnimation.draw(ctx);
     }
 
-    // Countdown ring
+    // Countdown ring — thick, glowing in tower color
     if (this.state === 'COUNTDOWN') {
       const progress = (this.elapsed - this.countdownStart) / this.countdownDuration;
       for (const tower of this.towers) {
         if (!tower.alive) continue;
         const endAngle = -Math.PI / 2 + (1 - progress) * Math.PI * 2;
-        ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+        const arcR = tower.radius + 15;
+        ctx.save();
+        // Outer glow
+        ctx.shadowColor = tower.color;
+        ctx.shadowBlur = 18;
+        ctx.strokeStyle = tower.color;
+        ctx.lineWidth = 8;
+        ctx.beginPath();
+        ctx.arc(tower.x, tower.y, arcR, -Math.PI / 2, endAngle);
+        ctx.stroke();
+        // Bright core
+        ctx.shadowBlur = 0;
+        ctx.strokeStyle = 'rgba(255,255,255,0.6)';
         ctx.lineWidth = 3;
         ctx.beginPath();
-        ctx.arc(tower.x, tower.y, tower.radius + 15, -Math.PI / 2, endAngle);
+        ctx.arc(tower.x, tower.y, arcR, -Math.PI / 2, endAngle);
         ctx.stroke();
+        ctx.restore();
       }
     }
 
